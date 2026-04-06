@@ -1,0 +1,24 @@
+# ============================================================
+# datasources.yaml — Grafana provisioning
+# Mount: /etc/grafana/provisioning/datasources/
+# ============================================================
+
+apiVersion: 1
+
+datasources:
+  - name: VictoriaMetrics
+    type: prometheus
+    uid: "victoriametrics-ds"
+    access: proxy
+    url: http://victoriametrics:8428
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "1s"
+      queryTimeout: "60s"
+      httpMethod: POST
+      incrementalQuerying: false
+      prometheusVersion: "2.40.0"
+      # exemplarTraceIdDestinations đã xóa — không dùng Tempo/Jaeger,
+      # để lại với datasourceUid rỗng gây Grafana log warning khi start
+    version: 1

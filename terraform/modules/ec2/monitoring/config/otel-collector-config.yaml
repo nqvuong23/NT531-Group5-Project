@@ -1,0 +1,120 @@
+# ============================================================
+# otel-collector-config.yaml — EC2 Monitoring (Central tier)
+# OTel Collector Contrib v0.101.0
+# Mount: /etc/otel-collector/config.yaml
+#
+# Fixes áp dụng:
+#   1. debug exporter: xóa 'sampling_initial/thereafter' (invalid field
+#      trong 0.101.0, gây collector FAIL TO START) → giữ 'verbosity' only
+#   2. Duplicate receiver: tách 'otlp' khỏi metrics/infrastructure
+#      (dùng 2 pipeline cùng receiver → mọi metric bị write 2 lần)
+#      → gộp thành 1 pipeline metrics duy nhất
+#   3. pprof extension: tắt (port 1777 không cần thiết cho đồ án)
+# ============================================================
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  # pprof tắt — không cần profiling endpoint trong môi trường này
+  # pprof:
+  #   endpoint: 0.0.0.0:1777
+
+receivers:
+  # ── Nhận tất cả telemetry từ OTel Agents trên 3 EKS nodes ──
+  # Agents push traces + app metrics + node_exporter metrics qua OTLP
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 32
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # ── Self-monitoring của collector này ──
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: "otel-collector-self"
+          scrape_interval: 10s
+          static_configs:
+            - targets: ["localhost:8888"]
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 8192
+    send_batch_max_size: 16384
+
+  # t3.medium 4GB RAM — giới hạn tại 400MiB
+  memory_limiter:
+    limit_mib: 400
+    spike_limit_mib: 100
+    check_interval: 5s
+
+  attributes/normalize:
+    actions:
+      - key: cluster
+        value: "microservices-perf"
+        action: upsert
+
+  filter/drop_unnecessary:
+    metrics:
+      exclude:
+        match_type: regexp
+        metric_names:
+          - "otelcol_.*_capacity"
+          - "otelcol_processor_dropped_.*"
+          - "otelcol_exporter_queue_capacity"
+
+exporters:
+  prometheusremotewrite:
+    endpoint: "http://victoriametrics:8428/api/v1/write"
+    tls:
+      insecure: true
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 300s
+    external_labels:
+      cluster: "microservices-perf"
+      environment: "production"
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # FIX: debug exporter chỉ nhận 'verbosity' trong OTel 0.101.0.
+  # 'sampling_initial/thereafter' là fields của logging exporter cũ
+  # → đã bị xóa, nếu để lại collector sẽ crash khi start.
+  debug:
+    verbosity: normal
+
+service:
+  extensions: [health_check]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/normalize, batch]
+      exporters: [debug]
+
+    # FIX: Gộp metrics/app + metrics/infrastructure thành 1 pipeline.
+    #
+    # Vấn đề cũ: cả 2 pipeline đều dùng receiver 'otlp'.
+    # OTel fan-out receiver tới nhiều pipeline → mọi OTLP metric bị
+    # write vào VictoriaMetrics 2 lần (duplicate time series).
+    #
+    # Giải pháp: 1 pipeline duy nhất cho tất cả metrics.
+    # prometheus/self scrapes self-metrics của collector này.
+    metrics:
+      receivers: [otlp, prometheus/self]
+      processors: [memory_limiter, attributes/normalize, filter/drop_unnecessary, batch]
+      exporters: [prometheusremotewrite]
+
+  telemetry:
+    logs:
+      level: info
+      output_paths: ["stdout"]
+    metrics:
+      address: 0.0.0.0:8888
+      level: detailed

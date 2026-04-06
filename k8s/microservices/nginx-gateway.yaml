@@ -1,0 +1,275 @@
+# ============================================================
+# nginx-gateway.yaml
+# Triển khai Nginx làm API Gateway trên Node 1 (role=gateway)
+#
+# CÁCH DÙNG:
+#   kubectl apply -f nginx-gateway.yaml
+#
+# ĐỂ BẬT RATE LIMITING (Scenario 1 mitigation):
+#   kubectl apply -f nginx-gateway.yaml -p '...'
+#   hoặc chỉnh sửa ConfigMap rồi:
+#   kubectl rollout restart deployment/nginx-gateway
+# ============================================================
+
+---
+# -------------------------------------------------------
+# ConfigMap: nginx.conf
+# Chứa cấu hình Nginx với các section được đánh dấu rõ
+# theo từng kịch bản thực nghiệm
+# -------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  labels:
+    app: nginx-gateway
+    component: api-gateway
+data:
+  nginx.conf: |
+    # ============================================================
+    # Nginx API Gateway Configuration
+    # Dùng làm entry point cho k6 load generator
+    # ============================================================
+
+    worker_processes auto;
+
+    # Tăng giới hạn file descriptor (cần cho high PPS test)
+    worker_rlimit_nofile 65535;
+
+    events {
+        worker_connections 10240;
+        use epoll;
+        multi_accept on;
+    }
+
+    http {
+        # ----------------------------------------------------------
+        # SCENARIO 1: Token Bucket Rate Limiting
+        # Mục đích: Giải pháp chống microburst (mitigation)
+        #
+        # CÁCH BẬT:
+        #   1. Bỏ comment dòng limit_req_zone bên dưới
+        #   2. Bỏ comment dòng limit_req trong location /
+        #   3. kubectl rollout restart deployment/nginx-gateway
+        #
+        # Tham số:
+        #   zone=api_zone:10m  → shared memory zone 10MB (~160K IPs)
+        #   rate=100r/s        → drain rate r (Token Bucket)
+        #   burst=200          → bucket size W (tokens có thể tích lũy)
+        #   nodelay            → không delay burst, reject ngay khi vượt
+        # ----------------------------------------------------------
+        # limit_req_zone $binary_remote_addr zone=api_zone:10m rate=100r/s;
+
+        # ----------------------------------------------------------
+        # Access log với timing đầy đủ để tính P50/P99 latency
+        # request_time = tổng thời gian xử lý request (giây)
+        # upstream_response_time = thời gian backend phản hồi
+        # ----------------------------------------------------------
+        log_format perf_log '$remote_addr [$time_local] '
+                            '"$request" $status '
+                            'req_time=$request_time '
+                            'upstream_time=$upstream_response_time '
+                            'bytes=$body_bytes_sent';
+
+        access_log /var/log/nginx/access.log perf_log;
+        error_log  /var/log/nginx/error.log warn;
+
+        # HTTP keepalive để giảm TCP overhead giữa k6 và Nginx
+        keepalive_timeout 65;
+        keepalive_requests 10000;
+
+        # Sendfile và TCP optimizations
+        sendfile    on;
+        tcp_nopush  on;
+        tcp_nodelay on;
+
+        # Buffer tuning — quan trọng cho microburst test
+        # Tăng buffer để hấp thụ burst trước khi drop
+        proxy_buffer_size          16k;
+        proxy_buffers              8 16k;
+        proxy_busy_buffers_size    32k;
+
+        # ----------------------------------------------------------
+        # Upstream: frontend service (Service A - Aggregator)
+        # Nginx → frontend:80 → backend gRPC services
+        # ----------------------------------------------------------
+        upstream frontend_backend {
+            server frontend:80;
+            # keepalive connections pool đến upstream
+            keepalive 64;
+        }
+
+        server {
+            listen 80;
+            server_name _;
+
+            # ----------------------------------------------------------
+            # SCENARIO 1: Rate Limiting — BẬT KHI CẦN MITIGATION
+            # Bỏ comment 2 dòng dưới để enable Token Bucket
+            # ----------------------------------------------------------
+            # limit_req zone=api_zone burst=200 nodelay;
+            # limit_req_status 429;
+
+            # ----------------------------------------------------------
+            # Main proxy location
+            # ----------------------------------------------------------
+            location / {
+                proxy_pass http://frontend_backend;
+                proxy_http_version 1.1;
+
+                # Bắt buộc dùng keepalive với upstream
+                proxy_set_header Connection "";
+
+                # Forward headers
+                proxy_set_header Host              $host;
+                proxy_set_header X-Real-IP         $remote_addr;
+                proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+
+                # Request ID để trace qua các service
+                proxy_set_header X-Request-ID $request_id;
+                add_header       X-Request-ID $request_id always;
+
+                # Timeouts
+                proxy_connect_timeout 5s;
+                proxy_send_timeout    60s;
+                proxy_read_timeout    60s;
+            }
+
+            # ----------------------------------------------------------
+            # Health check endpoint — k6 dùng để warm-up check
+            # loadgenerator initContainer cũng check endpoint này
+            # ----------------------------------------------------------
+            location /nginx-health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+
+            # ----------------------------------------------------------
+            # Nginx stub_status — đo connections cho observability
+            # Scrape bởi Prometheus Node Exporter hoặc OTel Collector
+            # ----------------------------------------------------------
+            location /nginx-status {
+                stub_status on;
+                allow 10.0.0.0/8;
+                deny all;
+            }
+        }
+    }
+
+---
+# -------------------------------------------------------
+# Deployment: nginx-gateway
+# -------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-gateway
+  labels:
+    app: nginx-gateway
+    component: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-gateway
+  template:
+    metadata:
+      labels:
+        app: nginx-gateway
+        component: api-gateway
+    spec:
+      # -------------------------------------------------------
+      # Node Placement: chỉ chạy trên Node được label gateway
+      # Sau khi chạy scripts/label-nodes.sh, Node 1 sẽ có:
+      #   label: role=gateway
+      #   taint: role=gateway:NoSchedule
+      # -------------------------------------------------------
+      nodeSelector:
+        role: gateway
+
+      # Toleration để vượt taint NoSchedule trên gateway node
+      tolerations:
+        - key: "role"
+          operator: "Equal"
+          value: "gateway"
+          effect: "NoSchedule"
+
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+
+          # Mount nginx.conf từ ConfigMap
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+
+          # Resources: để Nginx chiếm hầu hết 2 vCPU của c5.large
+          # không cạnh tranh với microservices vì ở node riêng
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              cpu: "1500m"     # c5.large có 2 vCPU, để 500m cho OS
+              memory: "512Mi"
+
+          # Readiness probe: Nginx sẵn sàng nhận traffic
+          readinessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+
+          # Liveness probe: restart nếu Nginx bị treo
+          livenessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 5
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+
+---
+# -------------------------------------------------------
+# Service: nginx-gateway
+# Type LoadBalancer → AWS NLB → entry point cho k6
+# k6 script trỏ FRONTEND_ADDR đến External IP của service này
+# -------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-gateway
+  labels:
+    app: nginx-gateway
+    component: api-gateway
+  annotations:
+    # Dùng NLB thay vì CLB để đo PPS chính xác hơn
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # Internal NLB (trong VPC) để k6 trên EC2 cùng VPC kết nối
+    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP

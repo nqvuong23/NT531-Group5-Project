@@ -1,0 +1,193 @@
+# ============================================================
+# alert-rules.yaml — Grafana Unified Alerting provisioning
+# Mount: /etc/grafana/provisioning/alerting/
+#
+# Fixes áp dụng:
+#   1. HighErrorRate / HighP99Latency: sửa tên metric
+#      Sai: http_requests_total{status=~"5.."}
+#           http_request_duration_seconds_bucket
+#      Đúng: http_server_request_count_total{http_response_status_code=~"5.."}
+#            http_server_request_duration_seconds_bucket
+#      Lý do: OTel Go SDK (otelhttp v0.60.0) emit theo OTel semantic
+#      conventions 1.20+. Sau khi qua prometheusremotewrite với
+#      resource_to_telemetry_conversion=true, tên metric và label
+#      sẽ theo format trên.
+#
+#   2. ThreadPoolSaturated: 'for: 30s' → 'for: 1m'
+#      Grafana evaluation interval mặc định 1m, 'for' phải >= interval.
+# ============================================================
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: "Microservices Performance Alerts"
+    folder: "Microservices Performance"
+    interval: 1m
+    rules:
+
+      # -------------------------------------------------------
+      # Alert 1: HighErrorRate — Error Rate > 1% trong 1 phút
+      # Source: frontend service qua otelhttp handler
+      # Metric: http_server_request_count_total (OTel Go SDK)
+      # Label:  http_response_status_code (OTel semconv 1.20+)
+      # -------------------------------------------------------
+      - uid: high-error-rate
+        title: HighErrorRate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            model:
+              expr: |
+                sum(rate(http_server_request_count_total{http_response_status_code=~"5.."}[1m]))
+                / sum(rate(http_server_request_count_total[1m])) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Error rate is above 1%"
+          description: "HTTP 5xx error rate is high — check Nginx access log and thread pool"
+          runbook_url: "Step1: Grafana Error Rate panel. Step2: OTel trace waterfall. Step3: Enable nginx limit_req if burst."
+        labels:
+          severity: critical
+          scenario: "general"
+
+      # -------------------------------------------------------
+      # Alert 2: HighP99Latency — P99 > 500ms trong 2 phút
+      # Metric: http_server_request_duration_seconds_bucket
+      # -------------------------------------------------------
+      - uid: high-p99-latency
+        title: HighP99Latency
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            model:
+              expr: |
+                histogram_quantile(0.99,
+                  sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)
+                ) * 1000
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [500], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "P99 latency exceeds 500ms"
+          description: "P99 latency is high — check Thread Pool saturation and downstream delay"
+        labels:
+          severity: high
+
+      # -------------------------------------------------------
+      # Alert 3: ThreadPoolSaturated
+      # Proxy metric: tỷ lệ HTTP 503 từ Go worker pool semaphore
+      # Khi pool đầy, middleware trả 503 ngay (M/M/n/K loss model)
+      # FIX: for: 1m (phải >= Grafana evaluation interval 1m)
+      # -------------------------------------------------------
+      - uid: thread-pool-saturated
+        title: ThreadPoolSaturated
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            model:
+              expr: |
+                sum(rate(http_server_request_count_total{http_response_status_code="503"}[1m]))
+                / sum(rate(http_server_request_count_total[1m])) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Worker thread pool may be saturated (503 rate > 10%)"
+          description: >
+            HTTP 503 rate is high — Go worker pool likely saturated.
+            Check response header X-Worker-Pool-Active vs X-Worker-Pool-Cap.
+            Scenario 2: inject tc netem delay to reproduce HoL Blocking.
+        labels:
+          severity: high
+          scenario: "scenario2"
+
+      # -------------------------------------------------------
+      # Alert 4: TCPRetransmitSpike — > 10/s trong 30s
+      # Source: Node Exporter qua OTel Agent DaemonSet
+      # -------------------------------------------------------
+      - uid: tcp-retransmit-spike
+        title: TCPRetransmitSpike
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            model:
+              expr: "sum(rate(node_netstat_Tcp_RetransSegs[1m]))"
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "TCP retransmission spike detected"
+          description: "TCP retransmit rate > 10/s — possible microburst packet drop (Scenario 1)"
+        labels:
+          severity: medium
+          scenario: "scenario1"
