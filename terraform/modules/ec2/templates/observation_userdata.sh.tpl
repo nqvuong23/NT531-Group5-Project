@@ -6,35 +6,38 @@ exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&
 # Dừng ngay nếu có lỗi
 set -euo pipefail
 
+cloud-init status --wait
+
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 log "=== Observation EC2 setup started (project: ${project_name}) ==="
 
-# BƯỚC 1: Cài Docker Engine (official Ubuntu method)
-log "--- Step 1: Install Docker Engine ---"
+# BƯỚC 1.1: Cài Docker Engine (official Ubuntu method)
+log "--- Step 1.1: Install Docker Engine ---"
 
 # Xóa các package cũ/unofficial có thể conflict
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 \
-           podman-docker containerd runc; do
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
   apt-get remove -y "$$pkg" 2>/dev/null || true
 done
 
 # Cập nhật apt và cài các package cần thiết để thêm Docker repo
 apt-get update -y
-apt-get install -y ca-certificates curl
+apt-get install -y ca-certificates curl unzip
 
 # Thêm Docker official GPG key
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  -o /etc/apt/keyrings/docker.asc
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 
 # Thêm Docker apt repository
-echo \
-  "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
-  https://download.docker.com/linux/ubuntu \
-  $$(. /etc/os-release && echo "$$VERSION_CODENAME") stable" \
-  > /etc/apt/sources.list.d/docker.list
+tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "$${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $$(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
 
 # Cài Docker Engine + Docker Compose plugin (V2)
 apt-get update -y
@@ -54,6 +57,12 @@ usermod -aG docker ubuntu
 
 log "Docker: $$(docker --version)"
 log "Docker Compose: $$(docker compose version)"
+
+# BƯỚC 1.2: Install AWS CLI
+log "--- Step 1.2: Install AWS CLI ---"
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+./aws/install
 
 # BƯỚC 2: Tạo cấu trúc thư mục /opt/monitoring/
 log "--- Step 2: Create directory structure ---"
@@ -133,7 +142,7 @@ log "All required files verified"
 # BƯỚC 4: Tạo file .env với Grafana credentials
 log "--- Step 4: Create .env file ---"
 
-cat > "$${MONITOR_DIR}/.env" << 'ENVEOF'
+cat > "$${MONITOR_DIR}/.env" << ENVEOF
 GRAFANA_ADMIN_USER=${grafana_admin_user}
 GRAFANA_ADMIN_PASSWORD=${grafana_admin_password}
 ENVEOF

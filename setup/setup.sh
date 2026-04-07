@@ -113,7 +113,7 @@ OBSERVATION_PRIVATE_IP=$(terraform output -raw observation_private_ip 2>/dev/nul
 OBSERVATION_PUBLIC_IP=$(terraform output -raw observation_public_ip 2>/dev/null || echo "")
 
 K6_PRIVATE_IP=$(terraform output -raw k6_private_ip 2>/dev/null || echo "")
-K6_PUBLIC_IP=$(terraform output -raw k6_public_ip 2>/dev/null || echo "")
+# K6_PUBLIC_IP=$(terraform output -raw k6_public_ip 2>/dev/null || echo "")
 
 TF_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "$CLUSTER_NAME")
 
@@ -136,16 +136,16 @@ if [[ -z "$K6_PRIVATE_IP" ]]; then
   read -r K6_PRIVATE_IP || true
 fi
 
-if [[ -z "$K6_PUBLIC_IP" ]]; then
-  warn "Không đọc được k6_public_ip. Nhập (hoặc Enter bỏ qua):"
-  read -r K6_PUBLIC_IP || true
-fi
+# if [[ -z "$K6_PUBLIC_IP" ]]; then
+#   warn "Không đọc được k6_public_ip. Nhập (hoặc Enter bỏ qua):"
+#   read -r K6_PUBLIC_IP || true
+# fi
 
 info "EKS Cluster:          $CLUSTER_NAME"
 info "Observation Private:  ${OBSERVATION_PRIVATE_IP:-N/A}"
 info "Observation Public:   ${OBSERVATION_PUBLIC_IP:-N/A}"
 info "K6 Private:           ${K6_PRIVATE_IP:-N/A}"
-info "K6 Public:            ${K6_PUBLIC_IP:-N/A}"
+# info "K6 Public:            ${K6_PUBLIC_IP:-N/A}"
 
 cd "$PROJECT_ROOT"
 

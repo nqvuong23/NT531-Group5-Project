@@ -155,8 +155,8 @@ if [[ "$FORCE" == false ]]; then
   echo -e "  Cluster:  ${BOLD}${CLUSTER_NAME}${NC}"
   echo -e "  Region:   ${BOLD}${REGION}${NC}"
   echo ""
-  read -r -p "  Bạn có chắc chắn muốn xóa? Gõ 'yes' để xác nhận: " CONFIRM
-  [[ "$CONFIRM" != "yes" ]] && { echo "  Đã hủy."; exit 0; }
+  # read -r -p "  Bạn có chắc chắn muốn xóa? Gõ 'yes' để xác nhận: " CONFIRM
+  # [[ "$CONFIRM" != "yes" ]] && { echo "  Đã hủy."; exit 0; }
 fi
 
 # -------------------------------------------------------
@@ -195,35 +195,32 @@ step "BƯỚC 5: Xóa monitoring K8s resources"
 
 if [[ "$K8S_AVAILABLE" == true ]]; then
 
-  # Xóa DaemonSets trước (release pods khỏi nodes)
-  running "Xóa DaemonSet otel-agent..."
-  k8s_delete daemonset otel-agent -n monitoring
+  if [[ -f "${MONITORING_K8S_DIR}/node-exporter-daemonset.yaml" ]]; then
+    running "kubectl delete -f node-exporter-daemonset.yaml..."
+    kubectl delete -f "${MICROSERVICES_K8S_DIR}/node-exporter-daemonset.yaml" \
+      --ignore-not-found=true 2>/dev/null || true
+    info "node-exporter-daemonset.yaml deleted"
+  else
+    warn "Không tìm thấy node-exporter-daemonset.yaml — bỏ qua"
+  fi
 
-  running "Xóa DaemonSet node-exporter..."
-  k8s_delete daemonset node-exporter -n monitoring
+  if [[ -f "${MONITORING_K8S_DIR}/otel-agent-daemonset.yaml" ]]; then
+    running "kubectl delete -f otel-agent-daemonset.yaml..."
+    kubectl delete -f "${MICROSERVICES_K8S_DIR}/otel-agent-daemonset.yaml" \
+      --ignore-not-found=true 2>/dev/null || true
+    info "otel-agent-daemonset.yaml deleted"
+  else
+    warn "Không tìm thấy otel-agent-daemonset.yaml — bỏ qua"
+  fi
 
-  # Xóa ConfigMaps
-  running "Xóa ConfigMaps trong monitoring namespace..."
-  k8s_delete configmap otel-agent-config       -n monitoring
-  k8s_delete configmap monitoring-endpoints     -n monitoring
-
-  # Xóa RBAC
-  running "Xóa RBAC (ServiceAccount, ClusterRole, ClusterRoleBinding)..."
-  k8s_delete serviceaccount  otel-agent    -n monitoring
-  k8s_delete serviceaccount  node-exporter -n monitoring
-  k8s_delete clusterrolebinding otel-agent
-  k8s_delete clusterrolebinding node-exporter
-  k8s_delete clusterrole otel-agent
-  k8s_delete clusterrole node-exporter
-
-  # Xóa Services trong monitoring namespace
-  running "Xóa Services trong monitoring namespace..."
-  k8s_delete service otel-agent    -n monitoring
-  k8s_delete service node-exporter -n monitoring
-
-  # Xóa toàn bộ namespace monitoring (dọn sạch mọi thứ còn lại)
-  running "Xóa namespace monitoring..."
-  k8s_delete namespace monitoring
+  if [[ -f "${MONITORING_K8S_DIR}/monitoring-namespace.yaml" ]]; then
+    running "kubectl delete -f monitoring-namespace.yaml..."
+    kubectl delete -f "${MICROSERVICES_K8S_DIR}/monitoring-namespace.yaml" \
+      --ignore-not-found=true 2>/dev/null || true
+    info "monitoring-namespace.yaml deleted"
+  else
+    warn "Không tìm thấy monitoring-namespace.yaml — bỏ qua"
+  fi
 
   # Chờ namespace bị xóa hoàn toàn (tối đa 60s)
   ELAPSED=0
