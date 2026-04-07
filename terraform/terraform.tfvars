@@ -45,7 +45,7 @@ grafana_allowed_cidrs = ["0.0.0.0/0"]
 # -------------------------------------------------------
 # EKS CLUSTER
 # -------------------------------------------------------
-eks_cluster_version = "1.29"
+eks_cluster_version = "1.30"
 
 # API Server access
 eks_endpoint_private_access = true
