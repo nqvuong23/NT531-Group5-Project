@@ -255,7 +255,8 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
   { warn "Không tìm thấy $MONITORING_K8S_DIR — bỏ qua"; } || {
 
   # Tạo namespace monitoring
-  kubectl apply -f - "${MONITORING_K8S_DIR}/monitoring-namespace.yaml"
+  running "Creating monitoring namespace..."
+  kubectl apply -f "${MONITORING_K8S_DIR}/monitoring-namespace.yaml"
 
   # Apply OTel Agent DaemonSet (tạo ConfigMap với placeholder trước)
   running "Applying otel-agent-daemonset.yaml..."
