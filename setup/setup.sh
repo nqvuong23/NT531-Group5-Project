@@ -111,6 +111,10 @@ running "Đọc terraform outputs..."
 
 OBSERVATION_PRIVATE_IP=$(terraform output -raw observation_private_ip 2>/dev/null || echo "")
 OBSERVATION_PUBLIC_IP=$(terraform output -raw observation_public_ip 2>/dev/null || echo "")
+
+K6_PRIVATE_IP=$(terraform output -raw k6_private_ip 2>/dev/null || echo "")
+K6_PUBLIC_IP=$(terraform output -raw k6_public_ip 2>/dev/null || echo "")
+
 TF_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "$CLUSTER_NAME")
 
 [[ -n "$TF_CLUSTER_NAME" ]] && CLUSTER_NAME="$TF_CLUSTER_NAME"
@@ -126,9 +130,22 @@ if [[ -z "$OBSERVATION_PUBLIC_IP" ]]; then
   read -r OBSERVATION_PUBLIC_IP || true
 fi
 
+if [[ -z "$K6_PRIVATE_IP" ]]; then
+  warn "Không đọc được k6_private_ip từ terraform output."
+  warn "Nhập Private IP của EC2 monitoring (bắt buộc cho ConfigMap patch):"
+  read -r K6_PRIVATE_IP || true
+fi
+
+if [[ -z "$K6_PUBLIC_IP" ]]; then
+  warn "Không đọc được k6_public_ip. Nhập (hoặc Enter bỏ qua):"
+  read -r K6_PUBLIC_IP || true
+fi
+
 info "EKS Cluster:          $CLUSTER_NAME"
 info "Observation Private:  ${OBSERVATION_PRIVATE_IP:-N/A}"
 info "Observation Public:   ${OBSERVATION_PUBLIC_IP:-N/A}"
+info "K6 Private:           ${K6_PRIVATE_IP:-N/A}"
+info "K6 Public:            ${K6_PUBLIC_IP:-N/A}"
 
 cd "$PROJECT_ROOT"
 
@@ -334,6 +351,10 @@ NGINX_LB_ENDPOINT=${NGINX_LB:-<PENDING>}
 # Observation EC2
 OBSERVATION_PRIVATE_IP=${OBSERVATION_PRIVATE_IP:-<UNKNOWN>}
 OBSERVATION_PUBLIC_IP=${OBSERVATION_PUBLIC_IP:-<UNKNOWN>}
+
+# K6 EC2
+K6_PRIVATE_IP=${K6_PRIVATE_IP:-<UNKNOWN>}
+K6_PUBLIC_IP=${K6_PUBLIC_IP:-<UNKNOWN>}
 
 # EKS
 EKS_CLUSTER_NAME=${CLUSTER_NAME}

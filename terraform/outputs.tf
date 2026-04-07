@@ -76,15 +76,6 @@ output "k6_public_ip" {
   value       = module.ec2.k6_public_ip
 }
 
-output "k6_ssh_command" {
-  description = "SSH command vào K6 instance"
-  value = var.key_pair_name != "" ? (
-    module.ec2.k6_public_ip != null ?
-    "ssh -i ${var.key_pair_name}.pem ec2-user@${module.ec2.k6_public_ip}" :
-    "ssh -i ${var.key_pair_name}.pem ec2-user@${module.ec2.k6_private_ip}"
-  ) : "aws ssm start-session --target ${module.ec2.k6_instance_id} --region ${var.aws_region}"
-}
-
 # ------- EC2: Observation -------
 output "observation_instance_id" {
   description = "ID of Observation instance"

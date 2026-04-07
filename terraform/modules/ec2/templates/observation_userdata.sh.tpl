@@ -1,29 +1,4 @@
 #!/bin/bash
-# ============================================================
-# User Data: Observation EC2 — Ubuntu
-# Project: ${project_name}
-#
-# Flow:
-#   1. Cài Docker Engine + Docker Compose plugin (official Ubuntu method)
-#   2. Tạo cấu trúc thư mục /opt/monitoring/
-#   3. Tải config files từ S3 → /opt/monitoring/
-#   4. Tạo .env với Grafana credentials
-#   5. docker compose up -d
-#   6. Chờ các container healthy
-#   7. Tạo systemd unit monitoring-stack (auto-restart khi reboot)
-#
-# Terraform variables được inject:
-#   ${project_name}           — tên project
-#   ${grafana_admin_user}     — Grafana admin username
-#   ${grafana_admin_password} — Grafana admin password
-#   ${s3_bucket}              — S3 bucket chứa config files
-#   ${aws_region}             — AWS region
-#
-# Log: /var/log/user-data.log
-# Kiểm tra sau khi chạy:
-#   sudo systemctl status monitoring-stack
-#   sudo docker compose -f /opt/monitoring/docker-compose.yml ps
-# ============================================================
 
 # Ghi log ra file và console đồng thời
 exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
@@ -35,10 +10,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 log "=== Observation EC2 setup started (project: ${project_name}) ==="
 
-# ============================================================
 # BƯỚC 1: Cài Docker Engine (official Ubuntu method)
-# Tham khảo: https://docs.docker.com/engine/install/ubuntu/
-# ============================================================
 log "--- Step 1: Install Docker Engine ---"
 
 # Xóa các package cũ/unofficial có thể conflict
@@ -65,7 +37,6 @@ echo \
   > /etc/apt/sources.list.d/docker.list
 
 # Cài Docker Engine + Docker Compose plugin (V2)
-# docker-compose-plugin cung cấp lệnh: docker compose (có dấu cách)
 apt-get update -y
 apt-get install -y \
   docker-ce \
@@ -84,14 +55,7 @@ usermod -aG docker ubuntu
 log "Docker: $$(docker --version)"
 log "Docker Compose: $$(docker compose version)"
 
-# ============================================================
 # BƯỚC 2: Tạo cấu trúc thư mục /opt/monitoring/
-#
-# Cấu trúc phải khớp với volume mounts trong docker-compose.yml:
-#   ./config/otel-collector-config.yaml  → otel-collector container
-#   ./config/grafana/provisioning/       → grafana container
-#   ./config/grafana/dashboards/         → grafana container
-# ============================================================
 log "--- Step 2: Create directory structure ---"
 
 MONITOR_DIR="/opt/monitoring"
@@ -103,16 +67,7 @@ mkdir -p "$${MONITOR_DIR}/config/grafana/dashboards"
 
 log "Directory structure created at $${MONITOR_DIR}"
 
-# ============================================================
 # BƯỚC 3: Download config files từ S3
-#
-# IAM Instance Profile của EC2 cấp quyền s3:GetObject và
-# s3:ListBucket trên bucket này — không cần cấu hình credentials.
-#
-# S3 key prefix: s3://${s3_bucket}/monitoring/
-# Tất cả key phải khớp với các đường dẫn trong aws_s3_object
-# resources được khai báo trong terraform modules/ec2/main.tf
-# ============================================================
 log "--- Step 3: Download config files from S3 (s3://${s3_bucket}/monitoring/) ---"
 
 export AWS_DEFAULT_REGION="${aws_region}"
@@ -175,16 +130,7 @@ for f in "$${REQUIRED_FILES[@]}"; do
 done
 log "All required files verified"
 
-# ============================================================
 # BƯỚC 4: Tạo file .env với Grafana credentials
-#
-# docker-compose.yml đọc các biến này qua env_file / .env:
-#   GRAFANA_ADMIN_USER     → GF_SECURITY_ADMIN_USER
-#   GRAFANA_ADMIN_PASSWORD → GF_SECURITY_ADMIN_PASSWORD
-#
-# Giá trị ${grafana_admin_user} và ${grafana_admin_password}
-# được inject bởi Terraform templatefile() khi apply.
-# ============================================================
 log "--- Step 4: Create .env file ---"
 
 cat > "$${MONITOR_DIR}/.env" << 'ENVEOF'
@@ -198,14 +144,7 @@ chown root:root "$${MONITOR_DIR}/.env"
 
 log ".env created (credentials injected by Terraform)"
 
-# ============================================================
 # BƯỚC 5: Khởi động monitoring stack
-#
-# Thứ tự start do depends_on trong docker-compose.yml:
-#   1. victoriametrics (healthy trước)
-#   2. otel-collector (chờ victoriametrics healthy)
-#   3. grafana (chờ victoriametrics healthy)
-# ============================================================
 log "--- Step 5: Start monitoring stack ---"
 
 cd "$${MONITOR_DIR}"
@@ -220,14 +159,7 @@ docker compose up -d
 
 log "Containers started, waiting for health checks..."
 
-# ============================================================
 # BƯỚC 6: Chờ từng container healthy
-#
-# Timeout được căn theo start_period trong docker-compose.yml:
-#   victoriametrics: start_period=20s → chờ tối đa 60s
-#   otel-collector:  start_period=15s → chờ tối đa 60s
-#   grafana:         start_period=30s → chờ tối đa 90s
-# ============================================================
 log "--- Step 6: Wait for containers healthy ---"
 
 wait_healthy() {
@@ -269,14 +201,7 @@ wait_healthy "grafana"         90 || true
 log "Current container status:"
 docker compose ps
 
-# ============================================================
 # BƯỚC 7: Tạo systemd unit để auto-restart khi EC2 reboot
-#
-# Type=oneshot + RemainAfterExit=yes:
-#   systemd coi service là "active" sau khi ExecStart chạy xong,
-#   cho dù ExecStart là lệnh ngắn (docker compose up -d).
-#   Điều này cho phép ExecStop chạy đúng khi shutdown.
-# ============================================================
 log "--- Step 7: Create systemd unit for auto-restart on reboot ---"
 
 cat > /etc/systemd/system/monitoring-stack.service << 'UNITEOF'
@@ -306,9 +231,7 @@ systemctl daemon-reload
 systemctl enable monitoring-stack
 log "systemd unit 'monitoring-stack' enabled (will auto-start on reboot)"
 
-# ============================================================
 # Done — lấy public IP (IMDSv2) để in URL truy cập
-# ============================================================
 TOKEN=$$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
   --max-time 5 2>/dev/null || echo "")
@@ -321,19 +244,3 @@ if [[ -n "$$TOKEN" ]]; then
 else
   PUBLIC_IP="<unknown>"
 fi
-
-log ""
-log "==================================================================="
-log " Observation setup COMPLETED — ${project_name}"
-log "==================================================================="
-log " Grafana UI:         http://$${PUBLIC_IP}:3000"
-log "   user: ${grafana_admin_user}  pass: (set in .env)"
-log " VictoriaMetrics:   http://$${PUBLIC_IP}:8428"
-log " OTel Collector:    gRPC :4317   HTTP :4318"
-log " Health check:      http://$${PUBLIC_IP}:13133"
-log "==================================================================="
-log " Debug commands:"
-log "   sudo cat /var/log/user-data.log"
-log "   sudo docker compose -f /opt/monitoring/docker-compose.yml ps"
-log "   sudo docker compose -f /opt/monitoring/docker-compose.yml logs"
-log "==================================================================="
