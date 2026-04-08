@@ -82,7 +82,7 @@ spec:
         runAsUser: 65534
       containers:
       - name: node-exporter
-        image: prom/node-exporter:v1.11.1
+        image: prom/node-exporter:latest
         args:
         - --path.procfs=/host/proc
         - --path.sysfs=/host/sys
@@ -150,13 +150,13 @@ spec:
           value: /rootfs
         livenessProbe:
           httpGet:
-            path: /-/healthy
+            path: /
             port: 9100
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /-/healthy
+            path: /
             port: 9100
           initialDelaySeconds: 5
           periodSeconds: 10

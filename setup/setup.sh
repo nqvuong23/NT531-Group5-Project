@@ -306,6 +306,7 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
     warn "node-exporter chưa ready sau 180s"
   kubectl -n monitoring rollout status daemonset/otel-agent    --timeout=180s || \
     warn "otel-agent chưa ready sau 180s"
+}
 
 # -------------------------------------------------------
 # BƯỚC 8: Xuất biến quan trọng
@@ -329,6 +330,10 @@ OBSERVATION_PUBLIC_IP=${OBSERVATION_PUBLIC_IP:-<UNKNOWN>}
 K6_INSTANCE_ID=${K6_INSTANCE_ID:-<UNKNOWN>}
 K6_PRIVATE_IP=${K6_PRIVATE_IP:-<UNKNOWN>}
 K6_PUBLIC_IP=${K6_PUBLIC_IP:-<UNKNOWN>}
+
+# SSH to EC2 command
+SSH_COMMAND_TO_OBSERVATION_EC2="ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${OBSERVATION_PUBLIC_IP}"
+SSH_COMMAND_TO_K6_EC2="ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${K6_PUBLIC_IP}"
 
 # EKS
 EKS_CLUSTER_NAME=${CLUSTER_NAME}
@@ -354,17 +359,17 @@ info ".env.output ghi tại: $OUTPUT_ENV_FILE"
 # --------------------------------------------------------------------
 step "BƯỚC 9: Lệnh SCP COPY các file script và thư mục lên các EC2"
 
-info "Dừng 3 phút để EC2 init hoàn tất"
-sleep 180
+info "Dừng 90 giây để EC2 init hoàn tất"
+sleep 90
 
 running "Bắt đầu chạy lệnh SCP ...."
 
 chmod 700 $SSH_KEY_DIR
 chmod 600 "${SSH_KEY_DIR}/key"
 
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
 
 info "Đã COPY các file script và thư mục lên các EC2 thành công"
 
