@@ -247,13 +247,3 @@ variable "grafana_admin_password" {
   type      = string
   sensitive = true
 }
-
-variable "victoriametrics_version" {
-  # description = "Phiên bản VictoriaMetrics cần cài đặt"
-  type = string
-}
-
-variable "otel_collector_version" {
-  # description = "Phiên bản OpenTelemetry Collector cần cài đặt"
-  type = string
-}
