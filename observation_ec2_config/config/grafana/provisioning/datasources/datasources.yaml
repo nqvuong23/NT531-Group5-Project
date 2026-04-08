@@ -14,11 +14,9 @@ datasources:
     isDefault: true
     editable: true
     jsonData:
-      timeInterval: "1s"
+      timeInterval: "15s"
       queryTimeout: "60s"
       httpMethod: POST
       incrementalQuerying: false
       prometheusVersion: "2.40.0"
-      # exemplarTraceIdDestinations đã xóa — không dùng Tempo/Jaeger,
-      # để lại với datasourceUid rỗng gây Grafana log warning khi start
     version: 1

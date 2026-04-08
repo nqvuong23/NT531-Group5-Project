@@ -1,23 +1,6 @@
-# ============================================================
-# otel-collector-config.yaml — EC2 Monitoring (Central tier)
-# OTel Collector Contrib v0.101.0
-# Mount: /etc/otel-collector/config.yaml
-#
-# Fixes áp dụng:
-#   1. debug exporter: xóa 'sampling_initial/thereafter' (invalid field
-#      trong 0.101.0, gây collector FAIL TO START) → giữ 'verbosity' only
-#   2. Duplicate receiver: tách 'otlp' khỏi metrics/infrastructure
-#      (dùng 2 pipeline cùng receiver → mọi metric bị write 2 lần)
-#      → gộp thành 1 pipeline metrics duy nhất
-#   3. pprof extension: tắt (port 1777 không cần thiết cho đồ án)
-# ============================================================
-
 extensions:
   health_check:
     endpoint: 0.0.0.0:13133
-  # pprof tắt — không cần profiling endpoint trong môi trường này
-  # pprof:
-  #   endpoint: 0.0.0.0:1777
 
 receivers:
   # ── Nhận tất cả telemetry từ OTel Agents trên 3 EKS nodes ──
@@ -58,13 +41,12 @@ processors:
         action: upsert
 
   filter/drop_unnecessary:
+    error_mode: ignore
     metrics:
-      exclude:
-        match_type: regexp
-        metric_names:
-          - "otelcol_.*_capacity"
-          - "otelcol_processor_dropped_.*"
-          - "otelcol_exporter_queue_capacity"
+      metric:
+        - 'IsMatch(name, "otelcol_.*_capacity")'
+        - 'IsMatch(name, "otelcol_processor_dropped_.*")'
+        - 'name == "otelcol_exporter_queue_capacity"'
 
 exporters:
   prometheusremotewrite:
@@ -83,9 +65,6 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: true
 
-  # FIX: debug exporter chỉ nhận 'verbosity' trong OTel 0.101.0.
-  # 'sampling_initial/thereafter' là fields của logging exporter cũ
-  # → đã bị xóa, nếu để lại collector sẽ crash khi start.
   debug:
     verbosity: normal
 
@@ -98,14 +77,6 @@ service:
       processors: [memory_limiter, attributes/normalize, batch]
       exporters: [debug]
 
-    # FIX: Gộp metrics/app + metrics/infrastructure thành 1 pipeline.
-    #
-    # Vấn đề cũ: cả 2 pipeline đều dùng receiver 'otlp'.
-    # OTel fan-out receiver tới nhiều pipeline → mọi OTLP metric bị
-    # write vào VictoriaMetrics 2 lần (duplicate time series).
-    #
-    # Giải pháp: 1 pipeline duy nhất cho tất cả metrics.
-    # prometheus/self scrapes self-metrics của collector này.
     metrics:
       receivers: [otlp, prometheus/self]
       processors: [memory_limiter, attributes/normalize, filter/drop_unnecessary, batch]
@@ -116,5 +87,10 @@ service:
       level: info
       output_paths: ["stdout"]
     metrics:
-      address: 0.0.0.0:8888
       level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
