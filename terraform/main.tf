@@ -122,8 +122,6 @@ module "ec2" {
 
   grafana_admin_user      = var.grafana_admin_user
   grafana_admin_password  = var.grafana_admin_password
-  victoriametrics_version = var.victoriametrics_version
-  otel_collector_version  = var.otel_collector_version
 
   # Common
   key_pair_name              = aws_key_pair.keypair.key_name
