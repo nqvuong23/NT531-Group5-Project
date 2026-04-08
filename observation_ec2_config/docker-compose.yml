@@ -38,7 +38,7 @@ services:
       victoriametrics:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=5", "--spider", "http://localhost:13133/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=5", "--spider", "http://localhost:13133/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -83,7 +83,7 @@ services:
     networks:
       - monitoring
     healthcheck:
-      test: ["CMD", "wget", "--spider", "--tries=5", "-q", "http://localhost:8428/health"]
+      test: ["CMD", "wget", "--spider", "--tries=5", "-q", "http://localhost:8428/-/healthy"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -82,8 +82,11 @@ spec:
         runAsUser: 65534
       containers:
       - name: node-exporter
-        image: prom/node-exporter:v1.8.1
+        image: prom/node-exporter:v1.11.1
         args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        - --path.rootfs=/rootfs
         - --collector.netstat
         - --collector.tcpstat
         - --collector.cpu
@@ -97,6 +100,8 @@ spec:
         - --collector.loadavg
         - --collector.uname
         - --collector.time
+        - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+        - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
         - --no-collector.arp
         - --no-collector.bcache
         - --no-collector.bonding
@@ -117,7 +122,7 @@ spec:
         ports:
         - name: metrics
           containerPort: 9100
-          hostPort: 9100
+          # hostPort: 9100
           protocol: TCP
         resources:
           requests:
@@ -145,13 +150,13 @@ spec:
           value: /rootfs
         livenessProbe:
           httpGet:
-            path: /
+            path: /-/healthy
             port: 9100
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /
+            path: /-/healthy
             port: 9100
           initialDelaySeconds: 5
           periodSeconds: 10
@@ -159,8 +164,8 @@ spec:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
           capabilities:
-            add:
-            - SYS_TIME
+            # add:
+            # - SYS_TIME
             drop:
             - ALL
       volumes:

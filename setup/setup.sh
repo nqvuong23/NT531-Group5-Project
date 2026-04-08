@@ -286,7 +286,7 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
     running "Patching monitoring-endpoints ConfigMap: http://${OBSERVATION_PRIVATE_IP}:4317"
     kubectl -n monitoring patch configmap monitoring-endpoints \
       --type merge \
-      -p "{\"data\":{\"otel_collector_endpoint\":\"http://${OBSERVATION_PRIVATE_IP}:4317\"}}"
+      -p "{\"data\":{\"otel_collector_endpoint\":\"${OBSERVATION_PRIVATE_IP}:4317\"}}"
     info "ConfigMap patched"
   else
     warn "Không có IP EC2 monitoring — patch ConfigMap thủ công sau:"

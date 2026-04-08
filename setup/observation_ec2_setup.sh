@@ -25,7 +25,7 @@ SRC_DIR="${SCRIPT_DIR}/observation_ec2_config"   # thư mục đã SCP vào EC2
 MONITOR_DIR="/opt/monitoring"              # thư mục đích trên EC2
 
 GRAFANA_ADMIN_USER="admin"
-GRAFANA_ADMIN_PASSWORD="admin"          # đổi trước khi chạy
+GRAFANA_ADMIN_PASSWORD="admin123"          # đổi trước khi chạy
 # ------------------------------
 
 log "=== Observation EC2 setup bắt đầu ==="
