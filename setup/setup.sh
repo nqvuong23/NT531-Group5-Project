@@ -332,8 +332,8 @@ K6_PRIVATE_IP=${K6_PRIVATE_IP:-<UNKNOWN>}
 K6_PUBLIC_IP=${K6_PUBLIC_IP:-<UNKNOWN>}
 
 # SSH to EC2 command
-SSH_COMMAND_TO_OBSERVATION_EC2="ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${OBSERVATION_PUBLIC_IP}"
-SSH_COMMAND_TO_K6_EC2="ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${K6_PUBLIC_IP}"
+SSH_COMMAND_TO_OBSERVATION_EC2=ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${OBSERVATION_PUBLIC_IP}
+SSH_COMMAND_TO_K6_EC2=ssh -i ${SSH_KEY_DIR}/key -o StrictHostKeyChecking=no ubuntu@${K6_PUBLIC_IP}
 
 # EKS
 EKS_CLUSTER_NAME=${CLUSTER_NAME}

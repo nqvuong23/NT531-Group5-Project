@@ -186,6 +186,14 @@ resource "aws_security_group" "eks_nodes" {
   }
 
   ingress {
+    # description = "SSH access"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = var.ssh_allowed_cidrs
+  }
+
+  ingress {
     # description = "Internal NLB → Nginx (port 80)"
     from_port = 80
     to_port = 80
@@ -299,6 +307,14 @@ resource "aws_security_group" "observation" {
     # description = "OTel Collector self-metrics"
     from_port = 8888
     to_port = 8888
+    protocol = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  ingress {
+    # description = "OTel Collector self-metrics"
+    from_port = 13133
+    to_port = 13133
     protocol = "tcp"
     cidr_blocks = [var.vpc_cidr]
   }
