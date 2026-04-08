@@ -97,7 +97,7 @@ ec2_enable_detailed_monitoring = false
 k6_instance_type = "t3.medium"
 k6_volume_type   = "gp3"
 k6_volume_size   = 30    # GB
-k6_public_ip     = false # Dùng SSM để kết nối, không cần public IP
+k6_public_ip     = true # Dùng SSM để kết nối, không cần public IP
 k6_version       = "0.49.0"
 
 # Observation Instance (OTel Collector + VictoriaMetrics + Grafana)
@@ -111,6 +111,3 @@ observation_public_ip     = true # Cần public IP để truy cập Grafana
 # Trong production: dùng AWS Secrets Manager thay vì hardcode
 grafana_admin_user     = "admin"
 grafana_admin_password = "admin"
-
-victoriametrics_version = "1.93.12"
-otel_collector_version  = "0.92.0"

@@ -15,6 +15,7 @@
 #   7. Apply monitoring K8s resources (DaemonSets) + chờ
 #      observation EC2 healthy
 #   8. Xuất biến quan trọng ra file .env.output
+#   9. Lệnh SCP copy các file script và thư mục lên các EC2
 #
 # CÁCH DÙNG:
 #   chmod +x setup/setup.sh
@@ -32,6 +33,10 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_DIR="${PROJECT_ROOT}/terraform"
 MICROSERVICES_K8S_DIR="${PROJECT_ROOT}/k8s/microservices"
 MONITORING_K8S_DIR="${PROJECT_ROOT}/k8s/monitoring"
+SSH_KEY_DIR="${TERRAFORM_DIR}/keypair"
+OBSERVATION_CONFIG_DIR="${PROJECT_ROOT}/observation_ec2_config"
+K6_EC2_SETUP_FILE="${SCRIPT_DIR}/k6_ec2_setup.sh"
+OBSERVATION_EC2_SETUP_FILE="${SCRIPT_DIR}/observation_ec2_setup.sh"
 
 CLUSTER_NAME="${CLUSTER_NAME:-NT531-Project-Group5-dev-eks}"
 REGION="${AWS_REGION:-ap-southeast-1}"
@@ -109,11 +114,13 @@ info "Terraform apply hoàn thành"
 
 running "Đọc terraform outputs..."
 
+OBSERVATION_INSTANCE_ID=$(terraform output -raw observation_instance_id 2>/dev/null || echo "")
 OBSERVATION_PRIVATE_IP=$(terraform output -raw observation_private_ip 2>/dev/null || echo "")
 OBSERVATION_PUBLIC_IP=$(terraform output -raw observation_public_ip 2>/dev/null || echo "")
 
+K6_INSTANCE_ID=$(terraform output -raw k6_instance_id 2>/dev/null || echo "")
 K6_PRIVATE_IP=$(terraform output -raw k6_private_ip 2>/dev/null || echo "")
-# K6_PUBLIC_IP=$(terraform output -raw k6_public_ip 2>/dev/null || echo "")
+K6_PUBLIC_IP=$(terraform output -raw k6_public_ip 2>/dev/null || echo "")
 
 TF_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "$CLUSTER_NAME")
 
@@ -130,22 +137,34 @@ if [[ -z "$OBSERVATION_PUBLIC_IP" ]]; then
   read -r OBSERVATION_PUBLIC_IP || true
 fi
 
+if [[ -z "$OBSERVATION_INSTANCE_ID" ]]; then
+  warn "Không đọc được OBSERVATION_INSTANCE_ID. Nhập (hoặc Enter bỏ qua):"
+  read -r OBSERVATION_INSTANCE_ID || true
+fi
+
 if [[ -z "$K6_PRIVATE_IP" ]]; then
   warn "Không đọc được k6_private_ip từ terraform output."
   warn "Nhập Private IP của EC2 monitoring (bắt buộc cho ConfigMap patch):"
   read -r K6_PRIVATE_IP || true
 fi
 
-# if [[ -z "$K6_PUBLIC_IP" ]]; then
-#   warn "Không đọc được k6_public_ip. Nhập (hoặc Enter bỏ qua):"
-#   read -r K6_PUBLIC_IP || true
-# fi
+if [[ -z "$K6_PUBLIC_IP" ]]; then
+  warn "Không đọc được k6_public_ip. Nhập (hoặc Enter bỏ qua):"
+  read -r K6_PUBLIC_IP || true
+fi
 
-info "EKS Cluster:          $CLUSTER_NAME"
-info "Observation Private:  ${OBSERVATION_PRIVATE_IP:-N/A}"
-info "Observation Public:   ${OBSERVATION_PUBLIC_IP:-N/A}"
-info "K6 Private:           ${K6_PRIVATE_IP:-N/A}"
-# info "K6 Public:            ${K6_PUBLIC_IP:-N/A}"
+if [[ -z "$K6_INSTANCE_ID" ]]; then
+  warn "Không đọc được K6_INSTANCE_ID. Nhập (hoặc Enter bỏ qua):"
+  read -r K6_INSTANCE_ID || true
+fi
+
+info "EKS Cluster Name:           ${CLUSTER_NAME}"
+info "Observation Private IP:     ${OBSERVATION_PRIVATE_IP:-N/A}"
+info "Observation Public IP:      ${OBSERVATION_PUBLIC_IP:-N/A}"
+info "Observation Instance ID:    ${OBSERVATION_INSTANCE_ID:-N/A}"
+info "K6 Private IP:              ${K6_PRIVATE_IP:-N/A}"
+info "K6 Public IP:               ${K6_PUBLIC_IP:-N/A}"
+info "K6 Instance ID:             ${K6_INSTANCE_ID:-N/A}"
 
 cd "$PROJECT_ROOT"
 
@@ -288,54 +307,6 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
   kubectl -n monitoring rollout status daemonset/otel-agent    --timeout=180s || \
     warn "otel-agent chưa ready sau 180s"
 
-  # ----------------------------------------------------------
-  # Chờ OTel Collector trên EC2 healthy
-  # [THAY ĐỔI so với bản cũ] Không cần SSH/SCP nữa.
-  # Chỉ poll health check endpoint :13133 để xác nhận userdata
-  # (Docker Compose) đã hoàn thành trên EC2.
-  #
-  # Timeline dự kiến từ khi terraform apply xong:
-  #   ~2 min  : EC2 boot + yum install docker
-  #   ~3 min  : docker compose pull (download images ~1.5GB)
-  #   ~4 min  : containers up + healthy
-  # → Chờ tối đa 10 phút là đủ trong hầu hết trường hợp.
-  # ----------------------------------------------------------
-  if [[ -n "$OBSERVATION_PRIVATE_IP" ]]; then
-    running "Chờ OTel Collector trên EC2 healthy (tối đa 10 phút)..."
-    OTEL_TIMEOUT=600; OTEL_ELAPSED=0
-    OTEL_HEALTH_URL="http://${OBSERVATION_PRIVATE_IP}:13133/"
-
-    until curl -sf --max-time 3 "$OTEL_HEALTH_URL" > /dev/null 2>&1; do
-      if [[ "$OTEL_ELAPSED" -ge "$OTEL_TIMEOUT" ]]; then
-        warn "OTel Collector chưa healthy sau ${OTEL_TIMEOUT}s."
-        warn "Kiểm tra userdata log trên EC2:"
-        warn "  sudo cat /var/log/user-data.log"
-        warn "Hoặc kiểm tra trạng thái containers:"
-        warn "  sudo docker compose -f /opt/monitoring/docker-compose.yml ps"
-        break
-      fi
-      warn "OTel Collector chưa ready — chờ 15s... (${OTEL_ELAPSED}s/${OTEL_TIMEOUT}s)"
-      sleep 15; OTEL_ELAPSED=$((OTEL_ELAPSED + 15))
-    done
-
-    if curl -sf --max-time 3 "$OTEL_HEALTH_URL" > /dev/null 2>&1; then
-      info "OTel Collector healthy ✓  ($OTEL_HEALTH_URL)"
-    fi
-
-    # Verify Grafana cũng healthy
-    GRAFANA_HEALTH_URL="http://${OBSERVATION_PRIVATE_IP}:3000/api/health"
-    if curl -sf --max-time 3 "$GRAFANA_HEALTH_URL" > /dev/null 2>&1; then
-      info "Grafana healthy ✓  (http://${OBSERVATION_PUBLIC_IP:-$OBSERVATION_PRIVATE_IP}:3000)"
-    else
-      warn "Grafana chưa respond — có thể cần thêm thời gian"
-    fi
-  else
-    warn "Không có IP EC2 — bỏ qua health check"
-  fi
-
-  info "Monitoring K8s resources deployed"
-}
-
 # -------------------------------------------------------
 # BƯỚC 8: Xuất biến quan trọng
 # -------------------------------------------------------
@@ -350,10 +321,12 @@ cat > "$OUTPUT_ENV_FILE" << ENVEOF
 NGINX_LB_ENDPOINT=${NGINX_LB:-<PENDING>}
 
 # Observation EC2
+OBSERVATION_INSTANCE_ID=${OBSERVATION_INSTANCE_ID:-<UNKNOWN>}
 OBSERVATION_PRIVATE_IP=${OBSERVATION_PRIVATE_IP:-<UNKNOWN>}
 OBSERVATION_PUBLIC_IP=${OBSERVATION_PUBLIC_IP:-<UNKNOWN>}
 
 # K6 EC2
+K6_INSTANCE_ID=${K6_INSTANCE_ID:-<UNKNOWN>}
 K6_PRIVATE_IP=${K6_PRIVATE_IP:-<UNKNOWN>}
 K6_PUBLIC_IP=${K6_PUBLIC_IP:-<UNKNOWN>}
 
@@ -375,6 +348,25 @@ SERVICE_B_NODE=${SERVICE_B_NODE:-<UNKNOWN>}
 ENVEOF
 
 info ".env.output ghi tại: $OUTPUT_ENV_FILE"
+
+# --------------------------------------------------------------------
+# BƯỚC 9: Lệnh SCP copy các file script và thư mục để đưa lên các EC2
+# --------------------------------------------------------------------
+step "BƯỚC 9: Lệnh SCP COPY các file script và thư mục lên các EC2"
+
+info "Dừng 3 phút để EC2 init hoàn tất"
+sleep 180
+
+running "Bắt đầu chạy lệnh SCP ...."
+
+chmod 700 $SSH_KEY_DIR
+chmod 600 "${SSH_KEY_DIR}/key"
+
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}.ap-southeast-1.compute.amazonaws.com:/home/ubuntu/"
+
+info "Đã COPY các file script và thư mục lên các EC2 thành công"
 
 # -------------------------------------------------------
 # Tóm tắt

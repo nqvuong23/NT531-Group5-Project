@@ -38,6 +38,9 @@ groups:
         data:
           - refId: A
             datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300  # Lấy dữ liệu trong 5 phút gần nhất (300 giây)
+              to: 0      # Đến hiện tại
             model:
               expr: |
                 sum(rate(http_server_request_count_total{http_response_status_code=~"5.."}[1m]))
@@ -79,6 +82,9 @@ groups:
         data:
           - refId: A
             datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300  # Lấy dữ liệu trong 5 phút gần nhất (300 giây)
+              to: 0      # Đến hiện tại
             model:
               expr: |
                 histogram_quantile(0.99,
@@ -121,6 +127,9 @@ groups:
         data:
           - refId: A
             datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300  # Lấy dữ liệu trong 5 phút gần nhất (300 giây)
+              to: 0      # Đến hiện tại
             model:
               expr: |
                 sum(rate(http_server_request_count_total{http_response_status_code="503"}[1m]))
@@ -164,6 +173,9 @@ groups:
         data:
           - refId: A
             datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300  # Lấy dữ liệu trong 5 phút gần nhất (300 giây)
+              to: 0      # Đến hiện tại
             model:
               expr: "sum(rate(node_netstat_Tcp_RetransSegs[1m]))"
               intervalMs: 1000

@@ -28,21 +28,6 @@ resource "aws_key_pair" "keypair" {
 }
 
 # ============================================================
-# MODULE 1: S3 Backend (State Storage)
-# Lưu ý: Apply module này TRƯỚC, xem hướng dẫn bootstrap ở trên
-# ============================================================
-# module "s3_backend" {
-#   source = "./modules/s3_backend"
-
-#   bucket_name          = var.state_bucket_name
-#   dynamodb_table_name  = var.state_dynamodb_table
-#   force_destroy        = var.state_bucket_force_destroy
-#   state_retention_days = var.state_retention_days
-
-#   tags = local.common_tags
-# }
-
-# ============================================================
 # MODULE 2: VPC & Networking
 # ============================================================
 module "vpc" {

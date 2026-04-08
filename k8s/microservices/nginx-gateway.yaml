@@ -263,7 +263,7 @@ metadata:
     # Dùng NLB thay vì CLB để đo PPS chính xác hơn
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     # Internal NLB (trong VPC) để k6 trên EC2 cùng VPC kết nối
-    service.beta.kubernetes.io/aws-load-balancer-internal: "false"
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
 spec:
   type: LoadBalancer
   selector:

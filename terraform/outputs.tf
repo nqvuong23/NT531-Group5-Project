@@ -24,11 +24,6 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-output "nat_gateway_public_ip" {
-  description = "Public IP of NAT Gateway (outbound traffic from private subnet)"
-  value       = module.vpc.nat_gateway_public_ip
-}
-
 # ------- EKS -------
 output "eks_cluster_name" {
   description = "EKS cluster name"
@@ -45,19 +40,9 @@ output "eks_cluster_version" {
   value       = module.eks.cluster_version
 }
 
-output "eks_oidc_provider_arn" {
-  description = "ARN OIDC Provider (used for IAM Roles for Service Accounts)"
-  value       = module.eks.oidc_provider_arn
-}
-
 output "eks_node_group_name" {
   description = "EKS node group name"
   value       = module.eks.node_group_name
-}
-
-output "eks_kubeconfig_command" {
-  description = "Update command kubeconfig for connection to EKS cluster"
-  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
 
 # ------- EC2: K6 -------
@@ -110,25 +95,4 @@ output "otel_collector_grpc_endpoint" {
 output "otel_collector_http_endpoint" {
   description = "HTTP endpoint of OTel Collector"
   value       = module.ec2.otel_collector_http_endpoint
-}
-
-# ------- Summary -------
-output "infrastructure_summary" {
-  description = "Summary of all infrastructure deployed"
-  value = {
-    project     = var.project_name
-    environment = var.environment
-    region      = var.aws_region
-    vpc_id      = module.vpc.vpc_id
-    eks = {
-      cluster_name = module.eks.cluster_name
-      version      = module.eks.cluster_version
-      node_group   = module.eks.node_group_name
-    }
-    ec2 = {
-      k6_ip          = module.ec2.k6_private_ip
-      observation_ip = coalesce(module.ec2.observation_public_ip, module.ec2.observation_private_ip)
-      grafana_url    = module.ec2.grafana_url
-    }
-  }
 }

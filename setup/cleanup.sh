@@ -222,15 +222,6 @@ if [[ "$K8S_AVAILABLE" == true ]]; then
     warn "Không tìm thấy monitoring-namespace.yaml — bỏ qua"
   fi
 
-  # Chờ namespace bị xóa hoàn toàn (tối đa 60s)
-  ELAPSED=0
-  while kubectl get namespace monitoring &>/dev/null 2>&1; do
-    [[ $ELAPSED -ge 60 ]] && { warn "Namespace monitoring chưa terminate sau 60s — tiếp tục"; break; }
-    running "Chờ namespace monitoring terminate... (${ELAPSED}s)"
-    sleep 5; ELAPSED=$((ELAPSED + 5))
-  done
-  ! kubectl get namespace monitoring &>/dev/null 2>&1 && info "Namespace monitoring đã xóa"
-
 else
   skipped "monitoring K8s resources"
 fi
@@ -291,44 +282,7 @@ if [[ "$K8S_AVAILABLE" == true ]]; then
     k8s_delete configmap   nginx-config
   fi
 
-  # ----------------------------------------------------------
-  # Chờ AWS NLB bị xóa hoàn toàn
-  # Cloud Controller Manager sẽ gọi AWS API xóa NLB sau khi
-  # Service bị xóa — thường mất 1-3 phút.
-  # ----------------------------------------------------------
-  if [[ -n "$NLB_HOSTNAME" ]]; then
-    running "Chờ AWS NLB terminate: $NLB_HOSTNAME"
-    running "(Bước này quan trọng để terraform destroy không bị treo tại VPC)"
-
-    # Trích xuất tên NLB từ hostname
-    # AWS NLB hostname format: <name>-<hash>.<region>.elb.amazonaws.com
-    NLB_NAME=$(echo "$NLB_HOSTNAME" | cut -d'.' -f1)
-
-    NLB_TIMEOUT=300; NLB_ELAPSED=0
-    while true; do
-      # Kiểm tra NLB còn tồn tại trong AWS không
-      NLB_COUNT=$(aws elbv2 describe-load-balancers \
-        --region "$REGION" \
-        ${PROFILE_ARG} \
-        --query "LoadBalancers[?contains(DNSName, '${NLB_NAME}')].LoadBalancerArn" \
-        --output text 2>/dev/null | grep -c "arn:" || echo "0")
-
-      [[ "$NLB_COUNT" -eq 0 ]] && { info "AWS NLB đã terminate ✓"; break; }
-      [[ "$NLB_ELAPSED" -ge "$NLB_TIMEOUT" ]] && {
-        warn "NLB chưa terminate sau ${NLB_TIMEOUT}s — terraform destroy có thể gặp lỗi VPC"
-        warn "Kiểm tra thủ công: aws elbv2 describe-load-balancers --region $REGION"
-        break
-      }
-      warn "NLB đang terminate... chờ 15s (${NLB_ELAPSED}s/${NLB_TIMEOUT}s)"
-      sleep 15; NLB_ELAPSED=$((NLB_ELAPSED + 15))
-    done
-  else
-    # Không có hostname → NLB chưa bao giờ được tạo, hoặc đã xóa
-    warn "Không tìm thấy NLB hostname — bỏ qua bước chờ NLB terminate"
-    # Vẫn chờ 15s để Cloud Controller kịp xử lý
-    running "Chờ 15s cho Cloud Controller dọn dẹp..."
-    sleep 15
-  fi
+  sleep 15
 
 else
   skipped "nginx-gateway / NLB cleanup"
