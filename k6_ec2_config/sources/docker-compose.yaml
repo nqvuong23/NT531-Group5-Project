@@ -1,0 +1,48 @@
+services:
+  otel-agent-k6:
+    image: otel/opentelemetry-collector-contrib:0.143.0
+    container_name: otel-agent-k6
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - --config=/etc/otel-collector/config.yaml
+    volumes:
+      - ./otel-agent-config.yaml:/etc/otel-collector/config.yaml:ro
+      - /proc:/hostfs/proc:ro
+      - /sys:/hostfs/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "4317:4317"    
+      - "4318:4318"    
+      - "8888:8888"    
+      - "13133:13133"  
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=5", "--spider", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    environment:
+      - GOGC=80
+      - OTEL_COLLECTOR_ENDPOINT=${OTEL_COLLECTOR_ENDPOINT}
+      - HOST_PROC=/hostfs/proc
+      - HOST_SYS=/hostfs/sys
+      - HOST_ETC=/hostfs/etc
+      - HOST_VAR=/hostfs/var
+      - HOST_RUN=/hostfs/run
+      - HOST_DEV=/hostfs/dev
+      - HOST_ROOT=/rootfs
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"

@@ -19,7 +19,7 @@ services:
   # Export metrics → VictoriaMetrics
   # ============================================================
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.143.0
     container_name: otel-collector
     restart: unless-stopped
     command:
@@ -63,7 +63,7 @@ services:
   # VictoriaMetrics v1.101.0 — Time-series database
   # ============================================================
   victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    image: victoriametrics/victoria-metrics:v1.139.0
     container_name: victoriametrics
     restart: unless-stopped
     command:
@@ -106,7 +106,7 @@ services:
   # Grafana v11.0.0 — Dashboard + Alerting
   # ============================================================
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.4.2
     container_name: grafana
     restart: unless-stopped
     environment:

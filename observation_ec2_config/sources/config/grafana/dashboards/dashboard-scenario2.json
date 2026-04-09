@@ -1,0 +1,224 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "Scenario 2 — Head-of-Line Blocking: Thread pool saturation, latency skew, Little's Law verification.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "🧵 Thread Pool Saturation — 503 Rate Proxy",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "503 rate là proxy cho thread pool saturation. Khi Go worker semaphore đầy, middleware trả 503 ngay (M/M/n/K loss model). Alert ngưỡng: > 10%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 }]
+          },
+          "custom_ov": { "thresholdsStyle": { "mode": "line" } }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"503\"}[1m])) / sum(rate(http_server_request_count_total[1m])) * 100",
+          "legendFormat": "503 % (Saturation Proxy)",
+          "refId": "A"
+        }
+      ],
+      "title": "🔴 503 Rate % — Thread Pool Saturation Proxy",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "So sánh Total RPS vs 503 RPS vs 2xx RPS. Khi pool bão hoà: 503 tăng, 2xx giảm tương ứng.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total[1m]))",
+          "legendFormat": "Total RPS",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=~\"2..\"}[1m]))",
+          "legendFormat": "Success (2xx) RPS",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"503\"}[1m]))",
+          "legendFormat": "Rejected (503) RPS",
+          "refId": "C"
+        }
+      ],
+      "title": "📊 Throughput: Total vs Success vs Rejected (503)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 101,
+      "title": "⏱️ Latency Skew — HoL Blocking Signature",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "HoL Blocking signature: P99 spike mạnh trong khi P50 tương đối ổn định. Inject delay 50ms–500ms trên Node B → quan sát divergence.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "legendFormat": "P50 (ms)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "legendFormat": "P95 (ms)",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "legendFormat": "P99 (ms)",
+          "refId": "C"
+        }
+      ],
+      "title": "⏱️ Latency P50 / P95 / P99",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "P99/P50 ratio — HoL blocking indicator. Ratio > 10x: tail latency bị chặn bởi queued requests phía sau slow request. Alert threshold: 10x.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 }]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) / histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "P99 / P50 Ratio",
+          "refId": "A"
+        }
+      ],
+      "title": "📐 P99/P50 Latency Ratio — HoL Indicator",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 102,
+      "title": "📐 Little's Law — N = λ × T",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Little's Law: N = λ × T. Số requests đang được xử lý (in-flight) = arrival rate × mean service time. Khi pool saturate: N_predicted vượt capacity → 503. Dùng P99 và P50 để bracket giá trị thực.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 19 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "N = λ × P99 (upper bound in-flight)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "N = λ × P50 (lower bound in-flight)",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "N = λ × P95 (mid estimate)",
+          "refId": "C"
+        }
+      ],
+      "title": "📐 Little's Law: N = λ × T (In-flight Request Estimate)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["microservices", "scenario2", "hol-blocking", "thread-pool", "littles-law"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_VICTORIAMETRICS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource",
+        "label": "Datasource"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+        "definition": "label_values(http_server_request_count_total, service_name)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "service",
+        "query": "label_values(http_server_request_count_total, service_name)",
+        "refresh": 2,
+        "type": "query",
+        "label": "Service"
+      }
+    ]
+  },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Scenario 2 — Head-of-Line Blocking",
+  "uid": "scenario2-hol-blocking",
+  "version": 1
+}

@@ -82,30 +82,41 @@ spec:
         runAsUser: 65534
       containers:
       - name: node-exporter
-        image: prom/node-exporter:latest
+        image: prom/node-exporter:v1.11.1
         args:
         - --path.procfs=/host/proc
         - --path.sysfs=/host/sys
         - --path.rootfs=/rootfs
+
+        # ── Collectors cần thiết cho 3 kịch bản ──
+        # Scenario 1 (Microburst): netstat, netdev, tcpstat
         - --collector.netstat
         - --collector.tcpstat
+        - --collector.netdev
+        # Scenario 2 (HoL): không cần collector riêng (dùng OTel app metrics)
+        # Scenario 3 (Contention): cpu, stat (context switches), meminfo
         - --collector.cpu
-        - --collector.cpufreq
+        - --collector.stat          # → node_context_switches_total
         - --collector.meminfo
+        # Chung: loadavg, filesystem, diskstats, uname, time
+        - --collector.loadavg
         - --collector.diskstats
         - --collector.filesystem
-        - --collector.netdev
-        - --collector.stat
-        - --collector.vmstat
-        - --collector.loadavg
         - --collector.uname
         - --collector.time
+        # cpufreq bỏ — không cần cho 3 kịch bản
+        # vmstat bỏ — không cần
+
+        # Filesystem exclusions (giữ nguyên)
         - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
         - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
+
+        # ── Tắt collectors không cần ──
         - --no-collector.arp
         - --no-collector.bcache
         - --no-collector.bonding
         - --no-collector.conntrack
+        - --no-collector.cpufreq
         - --no-collector.entropy
         - --no-collector.hwmon
         - --no-collector.infiniband
@@ -115,6 +126,7 @@ spec:
         - --no-collector.nfsd
         - --no-collector.sockstat
         - --no-collector.textfile
+        - --no-collector.vmstat
         - --no-collector.xfs
         - --no-collector.zfs
         - --web.listen-address=:9100
@@ -122,7 +134,6 @@ spec:
         ports:
         - name: metrics
           containerPort: 9100
-          # hostPort: 9100
           protocol: TCP
         resources:
           requests:
@@ -164,8 +175,6 @@ spec:
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
           capabilities:
-            # add:
-            # - SYS_TIME
             drop:
             - ALL
       volumes:

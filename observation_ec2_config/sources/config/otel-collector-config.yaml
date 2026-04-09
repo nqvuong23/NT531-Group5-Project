@@ -4,7 +4,6 @@ extensions:
 
 receivers:
   # ── Nhận tất cả telemetry từ OTel Agents trên 3 EKS nodes ──
-  # Agents push traces + app metrics + node_exporter metrics qua OTLP
   otlp:
     protocols:
       grpc:
@@ -13,20 +12,21 @@ receivers:
       http:
         endpoint: 0.0.0.0:4318
 
-  # ── Self-monitoring của collector này ──
+  # ── Self-monitoring ──
   prometheus/self:
     config:
       scrape_configs:
         - job_name: "otel-collector-self"
-          scrape_interval: 10s
+          scrape_interval: 15s
           static_configs:
             - targets: ["localhost:8888"]
 
 processors:
+  # timeout 2s: cân bằng giữa throughput và độ trễ data node exporter 1s
   batch:
-    timeout: 5s
-    send_batch_size: 8192
-    send_batch_max_size: 16384
+    timeout: 2s
+    send_batch_size: 4096
+    send_batch_max_size: 8192
 
   # t3.medium 4GB RAM — giới hạn tại 400MiB
   memory_limiter:
@@ -40,6 +40,7 @@ processors:
         value: "microservices-perf"
         action: upsert
 
+  # Chỉ drop internal collector metrics — không drop app/node metrics
   filter/drop_unnecessary:
     error_mode: ignore
     metrics:
@@ -62,6 +63,8 @@ exporters:
     external_labels:
       cluster: "microservices-perf"
       environment: "production"
+    # resource_to_telemetry_conversion: giữ resource attrs (node, pod)
+    # thành Prometheus labels — cần cho grouping trên dashboard
     resource_to_telemetry_conversion:
       enabled: true
 

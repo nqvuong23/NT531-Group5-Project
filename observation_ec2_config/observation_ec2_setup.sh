@@ -21,7 +21,7 @@ trap 'log "ERROR: dừng tại dòng $LINENO (exit code $?)"' ERR
 
 # ---------- Cấu hình ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC_DIR="${SCRIPT_DIR}/observation_ec2_config"   # thư mục đã SCP vào EC2
+SRC_DIR="${SCRIPT_DIR}/sources"   # thư mục đã SCP vào EC2
 MONITOR_DIR="/opt/monitoring"              # thư mục đích trên EC2
 
 GRAFANA_ADMIN_USER="admin"

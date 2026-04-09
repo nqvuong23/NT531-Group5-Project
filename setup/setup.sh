@@ -35,14 +35,17 @@ MICROSERVICES_K8S_DIR="${PROJECT_ROOT}/k8s/microservices"
 MONITORING_K8S_DIR="${PROJECT_ROOT}/k8s/monitoring"
 SSH_KEY_DIR="${TERRAFORM_DIR}/keypair"
 OBSERVATION_CONFIG_DIR="${PROJECT_ROOT}/observation_ec2_config"
-K6_EC2_SETUP_FILE="${SCRIPT_DIR}/k6_ec2_setup.sh"
-OBSERVATION_EC2_SETUP_FILE="${SCRIPT_DIR}/observation_ec2_setup.sh"
+K6_CONFIG_DIR="${PROJECT_ROOT}/k6_ec2_config"
+
+# OBSERVATION_EC2_SETUP_FILE="${SCRIPT_DIR}/observation_ec2_setup.sh"
+# K6_EC2_SETUP_FILE="${SCRIPT_DIR}/k6_ec2_setup.sh"
 
 CLUSTER_NAME="${CLUSTER_NAME:-NT531-Project-Group5-dev-eks}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 PROFILE="${AWS_PROFILE:-dev}"
 
 OUTPUT_ENV_FILE="${PROJECT_ROOT}/.env.output"
+K6_ENV_FILE="${K6_CONFIG_DIR}/sources/.env"
 
 # -------------------------------------------------------
 # Colors
@@ -283,7 +286,7 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
 
   # Patch ConfigMap với private IP thực của EC2 monitoring
   if [[ -n "$OBSERVATION_PRIVATE_IP" ]]; then
-    running "Patching monitoring-endpoints ConfigMap: http://${OBSERVATION_PRIVATE_IP}:4317"
+    running "Patching monitoring-endpoints ConfigMap: ${OBSERVATION_PRIVATE_IP}:4317"
     kubectl -n monitoring patch configmap monitoring-endpoints \
       --type merge \
       -p "{\"data\":{\"otel_collector_endpoint\":\"${OBSERVATION_PRIVATE_IP}:4317\"}}"
@@ -311,7 +314,7 @@ step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
 # -------------------------------------------------------
 # BƯỚC 8: Xuất biến quan trọng
 # -------------------------------------------------------
-step "BƯỚC 8: Xuất biến ra file .env.output"
+step "BƯỚC 8: Xuất biến ra file .env.output và file .env"
 
 cat > "$OUTPUT_ENV_FILE" << ENVEOF
 # ============================================================
@@ -344,7 +347,7 @@ GRAFANA_URL=http://${OBSERVATION_PUBLIC_IP:-<UNKNOWN>}:3000
 VICTORIAMETRICS_URL=http://${OBSERVATION_PUBLIC_IP:-<UNKNOWN>}:8428
 
 # OTel Collector (nhận từ EKS agents)
-OTEL_COLLECTOR_ENDPOINT=http://${OBSERVATION_PRIVATE_IP:-<UNKNOWN>}:4317
+OTEL_COLLECTOR_ENDPOINT=${OBSERVATION_PRIVATE_IP:-<UNKNOWN>}:4317
 
 # Node assignments
 GATEWAY_NODE=${GATEWAY_NODE:-<UNKNOWN>}
@@ -353,6 +356,23 @@ SERVICE_B_NODE=${SERVICE_B_NODE:-<UNKNOWN>}
 ENVEOF
 
 info ".env.output ghi tại: $OUTPUT_ENV_FILE"
+
+cat > "$K6_ENV_FILE" << ENVEOF
+# OTel Collector Endpoint (IP Private of Observation EC2) 
+OTEL_COLLECTOR_ENDPOINT=${OBSERVATION_PRIVATE_IP:-<UNKNOWN>}:4317
+
+# Endpoint ĐÚNG cho k6 trỏ về Agent cục bộ (gRPC)
+K6_OTEL_GRPC_EXPORTER_ENDPOINT=localhost:4317
+
+# Các biến bổ sung để k6 chạy mượt hơn
+K6_OTEL_GRPC_EXPORTER_INSECURE=true
+K6_OTEL_METRIC_PREFIX=k6.
+
+# Lệnh mỗi khi chạy k6 script
+K6_RUN_COMMAND="k6 run --out opentelemetry <script file name>"
+ENVEOF
+
+info ".env.output ghi tại: $K6_ENV_FILE"
 
 # --------------------------------------------------------------------
 # BƯỚC 9: Lệnh SCP copy các file script và thư mục để đưa lên các EC2
@@ -368,8 +388,10 @@ chmod 700 $SSH_KEY_DIR
 chmod 600 "${SSH_KEY_DIR}/key"
 
 scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${K6_CONFIG_DIR}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
+
+# scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
+# scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
 
 info "Đã COPY các file script và thư mục lên các EC2 thành công"
 

@@ -1,0 +1,166 @@
+# k6 cần chạy với flag (hoặc env var):
+#   K6_OTEL_GRPC_EXPORTER_ENDPOINT=otel-agent-k6:4317
+#   K6_OTEL_GRPC_EXPORTER_INSECURE=true
+#   K6_OTEL_METRIC_PREFIX=k6.           ← giữ prefix nhất quán
+#   hoặc trong cùng host: localhost:4317
+#
+# Luồng dữ liệu:
+#   k6 --out opentelemetry
+#     → OTLP gRPC :4317
+#     → otel-agent-k6 (filter + label)
+#     → OTel Collector EC2 (${OTEL_COLLECTOR_ENDPOINT})
+#     → VictoriaMetrics → Grafana
+#
+# ── Metrics k6 emit qua OTel output (sau prometheusremotewrite) ──
+#   k6_http_req_duration_*   histogram  → P50/P90/P95/P99/P99.9, jitter proxy
+#   k6_http_req_failed       gauge(0/1) → error rate, filter by http_status_code
+#   k6_http_reqs_total       counter    → request rate
+#   k6_http_req_waiting_*    histogram  → TTFB (Time To First Byte)
+#   k6_vus                   gauge      → Virtual Users đang active
+#   k6_iteration_duration_*  histogram  → tổng thời gian 1 iteration
+#
+# ── Attributes k6 đính kèm vào mỗi metric (thành labels trong VM) ──
+#   http.status_code  → http_status_code  (e.g. "200", "503", "502")
+#   http.method       → http_method       (GET, POST)
+#   name              → name              (k6 URL name/group — dùng cho S3)
+#   scenario          → scenario          (k6 scenario name — dùng phân loại)
+#   url               → HIGH CARDINALITY  → bị xoá bởi processor bên dưới
+#
+# ── Jitter (Scenario 1) ──
+#   k6 không emit stddev trực tiếp qua OTLP histogram.
+#   Proxy trong VictoriaMetrics MetricsQL:
+#     Spread = histogram_quantile(0.99, ...) - histogram_quantile(0.01, ...)
+#   Hoặc dùng k6 Trend thresholds trong script để log stddev vào console.
+#
+# ── Metrics cần theo kịch bản ──
+#   S1 Microburst  : k6_http_req_duration (P50/P95/P99/P99.9)
+#                    k6_http_req_failed{http_status_code=~"502|504"}
+#                    k6_http_req_waiting (TTFB jitter proxy)
+#                    k6_vus (context: load shape khi burst)
+#   S2 HoL Blocking: k6_http_req_failed{http_status_code="503"}
+#                    k6_http_reqs_total{http_status_code="503"}
+#   S3 Contention  : k6_http_req_duration by (name)  → P50/P90/P99 per endpoint
+#                    k6_http_reqs_total by (name)      → RPS per endpoint
+# ============================================================
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  # ── Nhận OTLP từ k6 ──
+  # k6 (v0.46+) dùng built-in output: k6 run --out opentelemetry script.js
+  # Env vars k6 cần set: K6_OTEL_GRPC_EXPORTER_ENDPOINT=<agent_host>:4317
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # ── 1. Memory guard — ưu tiên chạy đầu tiên ──
+  memory_limiter:
+    limit_mib: 150
+    spike_limit_mib: 30
+    check_interval: 5s
+
+  resourcedetection:
+    detectors: [env, ec2]
+    timeout: 5s
+
+  # ── 2. Filter: giữ đúng metrics cần cho 3 kịch bản ──
+  # k6 emit thêm nhiều metrics không cần cho phân tích này:
+  #   k6.data_received, k6.data_sent, k6.checks
+  #   k6.http_req_blocked, k6.http_req_connecting
+  #   k6.http_req_tls_handshaking, k6.http_req_sending, k6.http_req_receiving
+  # → Drop tất cả, chỉ giữ danh sách bên dưới.
+  filter/k6_needed:
+    error_mode: ignore
+    metrics:
+      metric:
+        # Syntax: "drop metric nếu điều kiện TRUE"
+        # → drop nếu tên KHÔNG khớp danh sách cần thiết
+        - >-
+          not IsMatch(name,
+            "k6\\.http_req_duration|k6\\.http_req_failed|k6\\.http_reqs|k6\\.http_req_waiting|k6\\.vus|k6\\.iteration_duration"
+          )
+
+  # ── 3. Attributes: làm sạch label, xoá high-cardinality, thêm metadata ──
+  attributes/k6_labels:
+    actions:
+      # Xoá full URL — high cardinality, gây bùng nổ series trong VictoriaMetrics
+      # Dùng label 'name' (k6 URL group) thay thế — người dùng đặt trong script
+      # via: http.get(url, { tags: { name: "/api/health" } })
+      - key: url
+        action: delete
+      - key: http.url
+        action: delete
+
+      # Thêm metadata để phân biệt nguồn trên dashboard/alert
+      - key: source
+        value: "k6"
+        action: upsert
+      - key: cluster
+        value: "microservices-perf"
+        action: upsert
+      - key: host
+        value: "k6-ec2"
+        action: upsert
+      - key: host_type
+        value: "load-generator"
+        action: upsert
+
+  # ── 4. Batch: timeout ngắn để không trễ data khi k6 đang chạy burst ──
+  # k6 push metrics theo interval (default 1s với OTel output)
+  # batch timeout 1s đảm bảo data arrive VictoriaMetrics trong ~2s
+  batch:
+    timeout: 1s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+exporters:
+  # ── Push sang OTel Collector trên EC2 monitoring ──
+  otlp/central:
+    endpoint: "${env:OTEL_COLLECTOR_ENDPOINT}"
+    tls:
+      insecure: true
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 500
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 120s
+
+  # Debug: log metrics ra stdout khi cần troubleshoot
+  # Tắt ở production bằng cách xoá khỏi pipeline exporters
+  debug:
+    verbosity: normal
+
+service:
+  extensions: [health_check]
+
+  pipelines:
+    # Pipeline duy nhất: chỉ metrics từ k6
+    # Không có traces pipeline vì k6 không emit traces
+    metrics/k6:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, filter/k6_needed, attributes/k6_labels, batch]
+      exporters:
+        - otlp/central
+        # - debug  # bật khi cần debug, tắt ở production
+
+  telemetry:
+    logs:
+      level: info
+      output_paths: ["stdout"]
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888

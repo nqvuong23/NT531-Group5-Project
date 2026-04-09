@@ -1,0 +1,404 @@
+apiVersion: 1
+
+groups:
+
+  # ================================================================
+  # SCENARIO 1 — Microburst Traffic & Congestion
+  # Metrics: TCP retransmit, packet drop, latency spike, error 502/504
+  # ================================================================
+  - orgId: 1
+    name: "Scenario 1 — Microburst"
+    folder: "Microservices Performance"
+    interval: 1m
+    rules:
+
+      # ── Alert 1.1: TCPRetransmitSpike ──
+      # TCP retransmit > 10/s: dấu hiệu RX buffer đầy, packet drop
+      - uid: tcp-retransmit-spike
+        title: TCPRetransmitSpike
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: "sum(rate(node_netstat_Tcp_RetransSegs[1m]))"
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "TCP retransmission spike detected"
+          description: "TCP retransmit rate > 10/s — RX buffer overrun, possible microburst packet drop. Check node_network_receive_drop_total."
+          runbook_url: "Step1: Grafana S1 dashboard → TCP Retransmit panel. Step2: Check k6 burst config. Step3: Verify NIC ring buffer size."
+        labels:
+          severity: medium
+          scenario: "scenario1"
+
+      # ── Alert 1.2: HighPacketDropRate ──
+      # Packet drop > 1% of RX: dấu hiệu buffer overrun
+      - uid: high-packet-drop-rate
+        title: HighPacketDropRate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                sum(rate(node_network_receive_drop_total{device="eth0"}[1m]))
+                / sum(rate(node_network_receive_packets_total{device="eth0"}[1m])) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Packet drop rate > 1% on eth0"
+          description: "High RX packet drop — NIC buffer overrun from microburst. Check ethtool -S eth0."
+        labels:
+          severity: high
+          scenario: "scenario1"
+
+      # ── Alert 1.3: HighErrorRate (502/504 from microburst) ──
+      - uid: high-error-rate
+        title: HighErrorRate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                sum(rate(http_server_request_count_total{http_response_status_code=~"5.."}[1m]))
+                / sum(rate(http_server_request_count_total[1m])) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [1], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "HTTP 5xx error rate > 1%"
+          description: "High 5xx rate — check 502/504 breakdown. During microburst: upstream timeout or connection refused."
+          runbook_url: "Step1: Grafana Error Rate panel. Step2: OTel trace waterfall. Step3: Check Nginx access log."
+        labels:
+          severity: critical
+          scenario: "scenario1"
+
+      # ── Alert 1.4: HighP99Latency ──
+      - uid: high-p99-latency
+        title: HighP99Latency
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                histogram_quantile(0.99,
+                  sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)
+                ) * 1000
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [500], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "P99 latency > 500ms"
+          description: "P99 latency spike — during microburst: TCP retransmit adds RTT. During HoL: thread pool full."
+        labels:
+          severity: high
+          scenario: "scenario1"
+
+  # ================================================================
+  # SCENARIO 2 — Head-of-Line Blocking (Thread Pool Saturation)
+  # Metrics: 503 rate as proxy for thread pool full, latency skew
+  # ================================================================
+  - orgId: 1
+    name: "Scenario 2 — HoL Blocking"
+    folder: "Microservices Performance"
+    interval: 1m
+    rules:
+
+      # ── Alert 2.1: ThreadPoolSaturated ──
+      # 503 rate > 10%: Go worker pool semaphore rejected requests
+      - uid: thread-pool-saturated
+        title: ThreadPoolSaturated
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                sum(rate(http_server_request_count_total{http_response_status_code="503"}[1m]))
+                / sum(rate(http_server_request_count_total[1m])) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "Worker thread pool saturated — 503 rate > 10%"
+          description: >
+            HTTP 503 rate high — Go worker pool semaphore full (M/M/n/K loss model).
+            Check response header X-Worker-Pool-Active vs X-Worker-Pool-Cap.
+            Reproduce: inject tc netem delay 50–500ms → observe HoL cascade.
+        labels:
+          severity: high
+          scenario: "scenario2"
+
+      # ── Alert 2.2: P99LatencySkew ──
+      # P99 >> P50 ratio > 10x: HoL blocking signature
+      - uid: p99-latency-skew
+        title: P99LatencySkew
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))
+                /
+                histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "P99/P50 latency ratio > 10x — HoL blocking signature"
+          description: "Large gap between P99 and P50 indicates head-of-line blocking. Check thread pool active connections and downstream delay via OTel traces."
+        labels:
+          severity: high
+          scenario: "scenario2"
+
+  # ================================================================
+  # SCENARIO 3 — Resource Contention
+  # Metrics: CPU steal, context switches, per-endpoint latency gap
+  # ================================================================
+  - orgId: 1
+    name: "Scenario 3 — Resource Contention"
+    folder: "Microservices Performance"
+    interval: 1m
+    rules:
+
+      # ── Alert 3.1: HighCPUSteal ──
+      # CPU steal > 10%: noisy neighbour trên EC2 shared tenancy
+      - uid: high-cpu-steal
+        title: HighCPUSteal
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                avg(rate(node_cpu_seconds_total{mode="steal"}[1m])) by (node) * 100
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "CPU steal > 10% on node {{ $labels.node }}"
+          description: "High CPU steal — noisy neighbour or over-provisioned EC2 instance. Light flow (GET /health) impacted by heavy flow (POST /data)."
+        labels:
+          severity: medium
+          scenario: "scenario3"
+
+      # ── Alert 3.2: HighContextSwitchRate ──
+      # Context switches > 100k/s: scheduling overhead from resource contention
+      - uid: high-context-switch-rate
+        title: HighContextSwitchRate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                sum(rate(node_context_switches_total[1m])) by (node)
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [100000], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Context switch rate > 100k/s on node {{ $labels.node }}"
+          description: "Excessive context switches — heavy POST /data flow consuming CPU quanta, starving GET /health. Compare per-endpoint latency."
+        labels:
+          severity: medium
+          scenario: "scenario3"
+
+      # ── Alert 3.3: EndpointLatencyDivergence ──
+      # P99 latency gap giữa endpoints: heavy endpoint ảnh hưởng light endpoint
+      - uid: endpoint-latency-divergence
+        title: EndpointLatencyDivergence
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                max(
+                  histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, http_route))
+                ) * 1000
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [200], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: "Endpoint P99 latency > 200ms — resource contention"
+          description: "Worst-case endpoint P99 > 200ms. Heavy flow (POST /data) may be saturating CPU/memory, causing latency bleed to light flow (GET /health)."
+        labels:
+          severity: medium
+          scenario: "scenario3"

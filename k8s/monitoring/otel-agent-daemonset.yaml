@@ -1,14 +1,3 @@
-# ============================================================
-# otel-agent-daemonset.yaml
-# OpenTelemetry Collector Agent — DaemonSet trên tất cả EKS nodes
-# Version: otel/opentelemetry-collector-contrib:0.101.0
-#
-# FIXES so với bản cũ:
-#   - regex: dùng '|-' thay vì '>-' (>- gộp newline thành space, phá vỡ regex)
-#   - OTEL_COLLECTOR_ENDPOINT inject qua ConfigMap monitoring-endpoints
-# ============================================================
-
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -47,9 +36,6 @@ roleRef:
   name: otel-agent
 
 ---
-# ConfigMap: monitoring-endpoints
-# Cập nhật otel_collector_endpoint sau khi biết IP của Observation EC2.
-# setup.sh sẽ tự động patch giá trị này.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -78,7 +64,7 @@ data:
         endpoint: 0.0.0.0:1777
 
     receivers:
-      # ---- OTLP: nhận traces + metrics từ Go microservices ----
+      # ── OTLP: nhận traces + metrics từ Go microservices ──
       otlp:
         protocols:
           grpc:
@@ -86,9 +72,8 @@ data:
           http:
             endpoint: 0.0.0.0:4318
 
-      # ---- Prometheus: scrape Node Exporter trên cùng node ----
-      # FIX: regex dùng '|-' (literal block, giữ newline) thay vì '>-'
-      # '>-' gộp newlines thành spaces → phá vỡ alternation regex
+      # ── Prometheus: scrape Node Exporter trên cùng node ──
+      # scrape_interval 1s để bắt được microburst (Scenario 1)
       prometheus/node_exporter:
         config:
           global:
@@ -106,11 +91,13 @@ data:
                   replacement: "node-exporter"
               metric_relabel_configs:
                 - source_labels: [__name__]
-                  # FIX: dùng literal string thay vì folded scalar
-                  regex: "node_netstat_Tcp_RetransSegs|node_network_receive_packets_total|node_network_receive_drop_total|node_network_transmit_packets_total|node_network_transmit_drop_total|node_cpu_seconds_total|node_context_switches_total|node_netstat_TcpExt_.*|node_tcpstat_.*|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_load1|node_load5|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_filesystem_avail_bytes|node_filesystem_size_bytes"
+                  # FIX: dùng literal block scalar (|-) để giữ newline, tránh phá regex
+                  # Thêm node_context_switches_total cho Scenario 3
+                  regex: |-
+                    node_netstat_Tcp_RetransSegs|node_network_receive_packets_total|node_network_receive_drop_total|node_network_transmit_packets_total|node_network_transmit_drop_total|node_cpu_seconds_total|node_context_switches_total|node_netstat_TcpExt_.*|node_tcpstat_.*|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_load1|node_load5|node_network_receive_bytes_total|node_network_transmit_bytes_total|node_filesystem_avail_bytes|node_filesystem_size_bytes
                   action: keep
 
-      # ---- Kubelet stats ----
+      # ── Kubelet stats ──
       kubeletstats:
         collection_interval: 10s
         auth_type: "serviceAccount"
@@ -119,7 +106,7 @@ data:
         metric_groups: [node, pod, container]
         extra_metadata_labels: [container.id]
 
-      # ---- Host metrics ----
+      # ── Host metrics ──
       hostmetrics:
         collection_interval: 10s
         scrapers:
@@ -139,10 +126,12 @@ data:
           paging:
 
     processors:
+      # timeout 500ms: giữ độ phân giải cho node exporter 1s
+      # send_batch_size nhỏ hơn để không block data dày khi microburst
       batch:
-        timeout: 1s
-        send_batch_size: 1024
-        send_batch_max_size: 2048
+        timeout: 500ms
+        send_batch_size: 512
+        send_batch_max_size: 1024
 
       memory_limiter:
         limit_mib: 200
@@ -174,10 +163,10 @@ data:
         pod_association:
           - sources:
               - from: resource_attribute
-                name: k8s.pod.ip
+                name: k8s.pod.uid
           - sources:
               - from: resource_attribute
-                name: k8s.pod.uid
+                name: k8s.pod.ip
           - sources:
               - from: connection
 
@@ -218,7 +207,7 @@ data:
           processors: [memory_limiter, resourcedetection, k8sattributes, attributes/add_node, batch]
           exporters: [otlp/central]
 
-        # Node Exporter metrics — pipeline riêng giữ interval 1s
+        # Node Exporter pipeline riêng — giữ interval 1s, batch nhỏ
         metrics/node_exporter:
           receivers: [prometheus/node_exporter]
           processors: [memory_limiter, attributes/add_node, batch]
@@ -277,14 +266,14 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: otel-agent
-          image: otel/opentelemetry-collector-contrib:latest
+          image: otel/opentelemetry-collector-contrib:0.143.0
           command:
             - /otelcol-contrib
             - --config=/conf/otel-agent-config.yaml
           ports:
             - name: otlp-grpc
               containerPort: 4317
-              hostPort: 4317      # Expose trên node IP để microservices gửi OTLP
+              hostPort: 4317
             - name: otlp-http
               containerPort: 4318
               hostPort: 4318
@@ -305,8 +294,6 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            # Lấy endpoint OTel Collector EC2 từ ConfigMap
-            # setup.sh sẽ patch ConfigMap này với private IP thực
             - name: OTEL_COLLECTOR_ENDPOINT
               valueFrom:
                 configMapKeyRef:
