@@ -98,6 +98,7 @@ spec:
         - --collector.cpu
         - --collector.stat          # → node_context_switches_total
         - --collector.meminfo
+        - --collector.qdisc
         # Chung: loadavg, filesystem, diskstats, uname, time
         - --collector.loadavg
         - --collector.diskstats

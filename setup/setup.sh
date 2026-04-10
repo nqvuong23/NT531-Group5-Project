@@ -16,6 +16,7 @@
 #      observation EC2 healthy
 #   8. Xuất biến quan trọng ra file .env.output
 #   9. Lệnh SCP copy các file script và thư mục lên các EC2
+#   10. Tự động SSH tới 2 EC2 rồi chạy file script tải và cấu hình tự động
 #
 # CÁCH DÙNG:
 #   chmod +x setup/setup.sh
@@ -33,12 +34,15 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_DIR="${PROJECT_ROOT}/terraform"
 MICROSERVICES_K8S_DIR="${PROJECT_ROOT}/k8s/microservices"
 MONITORING_K8S_DIR="${PROJECT_ROOT}/k8s/monitoring"
-SSH_KEY_DIR="${TERRAFORM_DIR}/keypair"
+
 OBSERVATION_CONFIG_DIR="${PROJECT_ROOT}/observation_ec2_config"
 K6_CONFIG_DIR="${PROJECT_ROOT}/k6_ec2_config"
+K6_SCRIPT_DIR="${PROJECT_ROOT}/script"
 
-# OBSERVATION_EC2_SETUP_FILE="${SCRIPT_DIR}/observation_ec2_setup.sh"
-# K6_EC2_SETUP_FILE="${SCRIPT_DIR}/k6_ec2_setup.sh"
+SSH_KEY_DIR="${TERRAFORM_DIR}/keypair"
+REMOTE_DESTINATION_DIR="/home/ubuntu/"
+REMOTE_OBSERVATION_SETUP_FILE="${REMOTE_DESTINATION_DIR}/observation_ec2_config/observation_ec2_setup.sh"
+REMOTE_K6_SETUP_FILE="${REMOTE_DESTINATION_DIR}/k6_ec2_config/k6_ec2_setup.sh"
 
 CLUSTER_NAME="${CLUSTER_NAME:-NT531-Project-Group5-dev-eks}"
 REGION="${AWS_REGION:-ap-southeast-1}"
@@ -366,7 +370,7 @@ K6_OTEL_GRPC_EXPORTER_ENDPOINT=localhost:4317
 
 # Các biến bổ sung để k6 chạy mượt hơn
 K6_OTEL_GRPC_EXPORTER_INSECURE=true
-K6_OTEL_METRIC_PREFIX=k6.
+K6_OTEL_METRIC_PREFIX=k6
 
 # Lệnh mỗi khi chạy k6 script
 K6_RUN_COMMAND="k6 run --out opentelemetry <script file name>"
@@ -387,13 +391,30 @@ running "Bắt đầu chạy lệnh SCP ...."
 chmod 700 $SSH_KEY_DIR
 chmod 600 "${SSH_KEY_DIR}/key"
 
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
-scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${K6_CONFIG_DIR}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
-
-# scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${OBSERVATION_EC2_SETUP_FILE}" "ubuntu@${OBSERVATION_PUBLIC_IP}:/home/ubuntu/"
-# scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "${K6_EC2_SETUP_FILE}" "ubuntu@${K6_PUBLIC_IP}:/home/ubuntu/"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${OBSERVATION_CONFIG_DIR}" "ubuntu@${OBSERVATION_PUBLIC_IP}:${REMOTE_DESTINATION_DIR}"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${K6_CONFIG_DIR}" "ubuntu@${K6_PUBLIC_IP}:${REMOTE_DESTINATION_DIR}"
+scp -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no -r "${K6_SCRIPT_DIR}" "ubuntu@${K6_PUBLIC_IP}:${REMOTE_DESTINATION_DIR}"
 
 info "Đã COPY các file script và thư mục lên các EC2 thành công"
+
+# -----------------------------------------------------------------------
+# BƯỚC 10: Tự động SSH tới 2 EC2 và tự động chạy file scrip để cấu hình
+# -----------------------------------------------------------------------
+step "BƯỚC 10: Tự động SSH tới 2 EC2 và tự động chạy file scrip để cấu hình"
+
+running "Bắt đầu SSH tới EC2 K6 ...."
+ssh -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "ubuntu@${k6_PUBLIC_IP}" << EOF
+  chmod +x $REMOTE_K6_SETUP_FILE
+  sudo bash $REMOTE_K6_SETUP_FILE
+EOF
+info "Đã SSH tới EC2 K6 và chạy file setup thành công"
+
+running "Bắt đầu SSH tới EC2 Observation ...."
+ssh -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "ubuntu@${OBSERVATION_PUBLIC_IP}" << EOF
+  chmod +x $REMOTE_OBSERVATION_SETUP_FILE
+  sudo bash $REMOTE_OBSERVATION_SETUP_FILE
+EOF
+info "Đã SSH tới EC2 Observation và chạy file setup thành công"
 
 # -------------------------------------------------------
 # Tóm tắt
