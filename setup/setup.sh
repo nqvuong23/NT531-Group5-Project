@@ -273,49 +273,6 @@ else
 fi
 
 # -------------------------------------------------------
-# BƯỚC 7: Apply monitoring K8s resources + chờ EC2 healthy
-# -------------------------------------------------------
-step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
-
-[[ ! -d "$MONITORING_K8S_DIR" ]] && \
-  { warn "Không tìm thấy $MONITORING_K8S_DIR — bỏ qua"; } || {
-
-  # Tạo namespace monitoring
-  running "Creating monitoring namespace..."
-  kubectl apply -f "${MONITORING_K8S_DIR}/monitoring-namespace.yaml"
-
-  # Apply OTel Agent DaemonSet (tạo ConfigMap với placeholder trước)
-  running "Applying otel-agent-daemonset.yaml..."
-  kubectl apply -f "${MONITORING_K8S_DIR}/otel-agent-daemonset.yaml"
-
-  # Patch ConfigMap với private IP thực của EC2 monitoring
-  if [[ -n "$OBSERVATION_PRIVATE_IP" ]]; then
-    running "Patching monitoring-endpoints ConfigMap: ${OBSERVATION_PRIVATE_IP}:4317"
-    kubectl -n monitoring patch configmap monitoring-endpoints \
-      --type merge \
-      -p "{\"data\":{\"otel_collector_endpoint\":\"${OBSERVATION_PRIVATE_IP}:4317\"}}"
-    info "ConfigMap patched"
-  else
-    warn "Không có IP EC2 monitoring — patch ConfigMap thủ công sau:"
-    warn "  kubectl -n monitoring patch configmap monitoring-endpoints \\"
-    warn "    --type merge -p '{\"data\":{\"otel_collector_endpoint\":\"http://<IP>:4317\"}}'"
-  fi
-
-  running "Applying node-exporter-daemonset.yaml..."
-  kubectl apply -f "${MONITORING_K8S_DIR}/node-exporter-daemonset.yaml"
-
-  # Restart OTel Agent để pick up config mới
-  running "Restarting otel-agent DaemonSet..."
-  kubectl -n monitoring rollout restart daemonset/otel-agent 2>/dev/null || true
-
-  info "Chờ DaemonSets ready..."
-  kubectl -n monitoring rollout status daemonset/node-exporter --timeout=180s || \
-    warn "node-exporter chưa ready sau 180s"
-  kubectl -n monitoring rollout status daemonset/otel-agent    --timeout=180s || \
-    warn "otel-agent chưa ready sau 180s"
-}
-
-# -------------------------------------------------------
 # BƯỚC 8: Xuất biến quan trọng
 # -------------------------------------------------------
 step "BƯỚC 8: Xuất biến ra file .env.output và file .env"
@@ -415,6 +372,53 @@ ssh -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "ubuntu@${OBSERVATION_PU
   sudo bash $REMOTE_OBSERVATION_SETUP_FILE
 EOF
 info "Đã SSH tới EC2 Observation và chạy file setup thành công"
+
+# -------------------------------------------------------
+# BƯỚC 7: Apply monitoring K8s resources + chờ EC2 healthy
+# -------------------------------------------------------
+step "BƯỚC 7: Deploy monitoring trên EKS + xác nhận EC2 healthy"
+
+info "Dừng 30 giây để EC2 init hoàn tất"
+sleep 30
+
+[[ ! -d "$MONITORING_K8S_DIR" ]] && \
+  { warn "Không tìm thấy $MONITORING_K8S_DIR — bỏ qua"; } || {
+
+  # Tạo namespace monitoring
+  running "Creating monitoring namespace..."
+  kubectl apply -f "${MONITORING_K8S_DIR}/monitoring-namespace.yaml"
+
+  # Apply OTel Agent DaemonSet (tạo ConfigMap với placeholder trước)
+  running "Applying otel-agent-daemonset.yaml..."
+  kubectl apply -f "${MONITORING_K8S_DIR}/otel-agent-daemonset.yaml"
+
+  # Patch ConfigMap với private IP thực của EC2 monitoring
+  if [[ -n "$OBSERVATION_PRIVATE_IP" ]]; then
+    running "Patching monitoring-endpoints ConfigMap: ${OBSERVATION_PRIVATE_IP}:4317"
+    kubectl -n monitoring patch configmap monitoring-endpoints \
+      --type merge \
+      -p "{\"data\":{\"otel_collector_endpoint\":\"${OBSERVATION_PRIVATE_IP}:4317\"}}"
+    info "ConfigMap patched"
+  else
+    warn "Không có IP EC2 monitoring — patch ConfigMap thủ công sau:"
+    warn "  kubectl -n monitoring patch configmap monitoring-endpoints \\"
+    warn "    --type merge -p '{\"data\":{\"otel_collector_endpoint\":\"http://<IP>:4317\"}}'"
+  fi
+
+  running "Applying node-exporter-daemonset.yaml..."
+  kubectl apply -f "${MONITORING_K8S_DIR}/node-exporter-daemonset.yaml"
+
+  # Restart OTel Agent để pick up config mới
+  running "Restarting otel-agent DaemonSet..."
+  kubectl -n monitoring rollout restart daemonset/otel-agent 2>/dev/null || true
+
+  info "Chờ DaemonSets ready..."
+  kubectl -n monitoring rollout status daemonset/node-exporter --timeout=180s || \
+    warn "node-exporter chưa ready sau 180s"
+  kubectl -n monitoring rollout status daemonset/otel-agent    --timeout=180s || \
+    warn "otel-agent chưa ready sau 180s"
+}
+
 
 # -------------------------------------------------------
 # Tóm tắt

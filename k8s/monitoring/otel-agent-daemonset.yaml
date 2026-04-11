@@ -98,32 +98,32 @@ data:
                   action: keep
 
       # ── Kubelet stats ──
-      kubeletstats:
-        collection_interval: 10s
-        auth_type: "serviceAccount"
-        endpoint: "https://${env:HOST_IP}:10250"
-        insecure_skip_verify: true
-        metric_groups: [node, pod, container]
-        extra_metadata_labels: [container.id]
+      # kubeletstats:
+      #   collection_interval: 10s
+      #   auth_type: "serviceAccount"
+      #   endpoint: "https://${env:HOST_IP}:10250"
+      #   insecure_skip_verify: true
+      #   metric_groups: [node, pod, container]
+      #   extra_metadata_labels: [container.id]
 
       # ── Host metrics ──
-      hostmetrics:
-        collection_interval: 10s
-        scrapers:
-          cpu:
-            metrics:
-              system.cpu.utilization:
-                enabled: true
-          memory:
-            metrics:
-              system.memory.utilization:
-                enabled: true
-          network:
-          disk:
-          filesystem:
-          load:
-          processes:
-          paging:
+      # hostmetrics:
+      #   collection_interval: 10s
+      #   scrapers:
+      #     cpu:
+      #       metrics:
+      #         system.cpu.utilization:
+      #           enabled: true
+      #     memory:
+      #       metrics:
+      #         system.memory.utilization:
+      #           enabled: true
+      #     network:
+      #     disk:
+      #     filesystem:
+      #     load:
+      #     processes:
+      #     paging:
 
     processors:
       # timeout 500ms: giữ độ phân giải cho node exporter 1s
@@ -139,7 +139,7 @@ data:
         check_interval: 5s
 
       resourcedetection:
-        detectors: [env, ec2, eks]
+        detectors: [env, ec2]
         timeout: 10s
         override: false
 
@@ -203,7 +203,7 @@ data:
           exporters: [otlp/central]
 
         metrics/app:
-          receivers: [otlp, kubeletstats, hostmetrics]
+          receivers: [otlp]
           processors: [memory_limiter, resourcedetection, k8sattributes, attributes/add_node, batch]
           exporters: [otlp/central]
 
