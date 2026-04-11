@@ -62,7 +62,7 @@ eks_log_retention_days        = 7
 # c5.large: 2 vCPU, 4GB RAM
 # -------------------------------------------------------
 eks_node_instance_type   = "c5.large"
-eks_node_ami_type        = "AL2_x86_64"
+eks_node_ami_type        = "AL2023_x86_64_STANDARD"
 eks_node_disk_size       = 50 # GB per node
 eks_node_capacity_type   = "ON_DEMAND"
 eks_node_desired_size    = 3

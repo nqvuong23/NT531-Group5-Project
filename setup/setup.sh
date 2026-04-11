@@ -403,7 +403,7 @@ info "Đã COPY các file script và thư mục lên các EC2 thành công"
 step "BƯỚC 10: Tự động SSH tới 2 EC2 và tự động chạy file scrip để cấu hình"
 
 running "Bắt đầu SSH tới EC2 K6 ...."
-ssh -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "ubuntu@${k6_PUBLIC_IP}" << EOF
+ssh -i "${SSH_KEY_DIR}/key" -o StrictHostKeyChecking=no "ubuntu@${K6_PUBLIC_IP}" << EOF
   chmod +x $REMOTE_K6_SETUP_FILE
   sudo bash $REMOTE_K6_SETUP_FILE
 EOF
