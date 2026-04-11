@@ -219,7 +219,7 @@ spec:
                 - ALL
             privileged: false
             readOnlyRootFilesystem: true
-          image: nqvuong23/checkoutservice:v0.10.4-nt531
+          image: us-central1-docker.pkg.dev/google-samples/microservices-demo/checkoutservice:v0.10.5
           ports:
           - containerPort: 5050
           readinessProbe:
@@ -802,7 +802,7 @@ spec:
                 - ALL
             privileged: false
             readOnlyRootFilesystem: true
-          image: nqvuong23/frontend:v0.10.4-nt531
+          image: nqvuong23/frontend:v2
           ports:
           - containerPort: 8080
           readinessProbe:
