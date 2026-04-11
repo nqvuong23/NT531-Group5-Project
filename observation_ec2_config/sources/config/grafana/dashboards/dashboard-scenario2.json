@@ -2,50 +2,79 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Scenario 2 — Head-of-Line Blocking: Thread pool saturation, latency skew, Little's Law verification.",
+  "description": "Scenario 2 — Head-of-Line Blocking: Thread pool saturation (OTel SDK frontend), latency skew, error 503 (k6), traces (OTel SDK frontend + backend).",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
-      "id": 100,
-      "title": "🧵 Thread Pool Saturation — 503 Rate Proxy",
+      "id": 200,
+      "title": "📊 Mandatory — CPU / Memory / Request Count",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "503 rate là proxy cho thread pool saturation. Khi Go worker semaphore đầy, middleware trả 503 ngay (M/M/n/K loss model). Alert ngưỡng: > 10%.",
+      "description": "CPU utilization per node — source: node-exporter (collector.cpu). HoL: CPU trên node 2 (frontend) có thể bị giữ bởi goroutine chờ backend, node 3 (backend) CPU tăng do delay 200ms netem.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 2 },
-          "unit": "percent",
+          "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 }]
-          },
-          "custom_ov": { "thresholdsStyle": { "mode": "line" } }
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
-      "id": 1,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 201,
       "options": { "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"503\"}[1m])) / sum(rate(http_server_request_count_total[1m])) * 100",
-          "legendFormat": "503 % (Saturation Proxy)",
+          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\", node=~\"$node\"}[1m])) by (node)",
+          "legendFormat": "CPU — {{ node }}",
           "refId": "A"
         }
       ],
-      "title": "🔴 503 Rate % — Thread Pool Saturation Proxy",
+      "title": "🖥️ CPU Utilization per Node",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "So sánh Total RPS vs 503 RPS vs 2xx RPS. Khi pool bão hoà: 503 tăng, 2xx giảm tương ứng.",
+      "description": "Memory available per node — source: node-exporter (collector.meminfo). Khi thread pool bão hoà, goroutine stack accumulate → memory leak potential.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "bytes"
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 202,
+      "targets": [
+        {
+          "expr": "node_memory_MemAvailable_bytes{node=~\"$node\"}",
+          "legendFormat": "Available RAM — {{ node }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🧠 Memory Available per Node",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Request count — source: k6 --out otlp → OTel Agent k6-EC2. k6_http_reqs_total counter. HoL: RPS của k6 giữ constant (lambda=50), nhưng success rate giảm khi pool bão hoà.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -53,38 +82,175 @@
           "unit": "reqps"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 203,
+      "targets": [
+        {
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\"}[1m]))",
+          "legendFormat": "Total RPS — k6",
+          "refId": "A"
+        }
+      ],
+      "title": "📈 Request Count — k6 Total RPS",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 100,
+      "title": "🧵 Thread Pool Saturation (OTel SDK — frontend node 2) + Error 503 (k6)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Active worker threads — source: OTel SDK trong frontend (node 2) → OTel Agent DaemonSet → Collector. Metric name: custom instrument, ví dụ thread_pool_active_workers (gauge). Khi active = capacity → saturation. Label service_name phân biệt frontend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 40 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "id": 1,
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "thread_pool_active_workers{service_name=~\"$service\"}",
+          "legendFormat": "Active Workers — {{ service_name }}",
+          "refId": "A"
+        },
+        {
+          "expr": "thread_pool_capacity{service_name=~\"$service\"}",
+          "legendFormat": "Capacity — {{ service_name }}",
+          "refId": "B"
+        }
+      ],
+      "title": "🧵 Active / Idle Worker Threads — OTel SDK (frontend)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "503 rate từ k6 — source: k6 --out otlp → OTel Agent k6-EC2. k6_http_req_failed với tag http_status_code=503 nếu k6 script set. Proxy for thread pool saturation: khi semaphore đầy, frontend trả 503 ngay. Alert: > 10%.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(http_server_request_count_total[1m]))",
+          "expr": "avg(k6_http_req_failed{source=\"k6\", http_status_code=\"503\"}) * 100",
+          "legendFormat": "503 Rate % (k6)",
+          "refId": "A"
+        },
+        {
+          "expr": "avg(k6_http_req_failed{source=\"k6\"}) * 100",
+          "legendFormat": "Total Failed Rate % (k6)",
+          "refId": "B"
+        }
+      ],
+      "title": "🔴 503 Error Rate % — k6 (Thread Pool Saturation Proxy)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Connection pool utilization — source: OTel SDK trong frontend (node 2). Metric: connection_pool_active (gauge) + connection_pool_max. Khi active/max → 1.0 thì pool exhausted → HoL bắt đầu.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "connection_pool_active{service_name=~\"$service\"} / connection_pool_max{service_name=~\"$service\"}",
+          "legendFormat": "Pool Utilization — {{ service_name }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🔗 Connection Pool Utilization — OTel SDK (frontend)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Throughput so sánh k6 gửi vs success — source: k6 --out otlp. k6_http_reqs_total total vs expected_response=true. HoL: Total RPS ổn định (50/s), Success giảm, 503 tăng.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\"}[1m]))",
           "legendFormat": "Total RPS",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=~\"2..\"}[1m]))",
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\", expected_response=\"true\"}[1m]))",
           "legendFormat": "Success (2xx) RPS",
           "refId": "B"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"503\"}[1m]))",
-          "legendFormat": "Rejected (503) RPS",
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\", expected_response=\"false\"}[1m]))",
+          "legendFormat": "Failed (503) RPS",
           "refId": "C"
         }
       ],
-      "title": "📊 Throughput: Total vs Success vs Rejected (503)",
+      "title": "📊 Throughput: Total vs Success vs Rejected — k6",
       "type": "timeseries"
     },
+
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
       "id": 101,
-      "title": "⏱️ Latency Skew — HoL Blocking Signature",
+      "title": "⏱️ Latency Skew — HoL Blocking Signature (k6 output)",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "HoL Blocking signature: P99 spike mạnh trong khi P50 tương đối ổn định. Inject delay 50ms–500ms trên Node B → quan sát divergence.",
+      "description": "Latency P50/P95/P99 — source: k6 --out otlp → OTel Agent k6-EC2. HoL Blocking signature: P99 spike mạnh trong khi P50 tương đối ổn định (request nhanh chạy OK, request chậm bị xếp hàng). Inject delay 50-500ms netem → quan sát divergence.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -92,35 +258,40 @@
           "unit": "ms",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 500 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
           }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
-      "id": 3,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "id": 5,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
           "legendFormat": "P50 (ms)",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
           "legendFormat": "P95 (ms)",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
           "legendFormat": "P99 (ms)",
           "refId": "C"
         }
       ],
-      "title": "⏱️ Latency P50 / P95 / P99",
+      "title": "⏱️ Latency P50 / P95 / P99 — k6",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "P99/P50 ratio — HoL blocking indicator. Ratio > 10x: tail latency bị chặn bởi queued requests phía sau slow request. Alert threshold: 10x.",
+      "description": "P99/P50 ratio — source: k6 --out otlp. HoL blocking indicator: ratio > 10x nghĩa là tail latency bị block bởi các request xếp hàng sau slow request. Alert threshold: 10x.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -128,32 +299,66 @@
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
           }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
-      "id": 4,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "id": 6,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) / histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le)) / histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
           "legendFormat": "P99 / P50 Ratio",
           "refId": "A"
         }
       ],
-      "title": "📐 P99/P50 Latency Ratio — HoL Indicator",
+      "title": "📐 P99/P50 Latency Ratio — HoL Indicator (k6)",
       "type": "timeseries"
     },
+
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
-      "id": 102,
-      "title": "📐 Little's Law — N = λ × T",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 103,
+      "title": "🔍 Trace: Span Duration vs Wait Time (OTel SDK — frontend + backend)",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Little's Law: N = λ × T. Số requests đang được xử lý (in-flight) = arrival rate × mean service time. Khi pool saturate: N_predicted vượt capacity → 503. Dùng P99 và P50 để bracket giá trị thực.",
+      "description": "Span duration từ OTel SDK — source: OTel SDK frontend (node 2) + backend (node 3) → OTel Agent DaemonSet → Collector. http_server_request_duration_seconds là OTel semantic convention. Chú ý: metric này từ microservice SDK, khác với k6_http_req_duration. Frontend span bao gồm wait time chờ worker pool.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[1m])) by (le, service_name)) * 1000",
+          "legendFormat": "P99 Span Duration — {{ service_name }}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[1m])) by (le, service_name)) * 1000",
+          "legendFormat": "P50 Span Duration — {{ service_name }}",
+          "refId": "B"
+        }
+      ],
+      "title": "🔍 Span Duration P50/P99 — OTel SDK (per service)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Little's Law: N = λ × T — source: OTel SDK. In-flight requests estimate = arrival rate × mean service time. Khi N_predicted > capacity (50 workers) → 503. Dùng OTel SDK metric http_server_request_duration_seconds (service-side, bao gồm wait time).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -161,32 +366,28 @@
           "unit": "short"
         }
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 19 },
-      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 8,
       "targets": [
         {
-          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
-          "legendFormat": "N = λ × P99 (upper bound in-flight)",
+          "expr": "sum(rate(http_server_request_count_total{service_name=~\"$service\"}[1m])) by (service_name) * histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[1m])) by (le, service_name))",
+          "legendFormat": "N = λ × P99 — {{ service_name }}",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
-          "legendFormat": "N = λ × P50 (lower bound in-flight)",
+          "expr": "sum(rate(http_server_request_count_total{service_name=~\"$service\"}[1m])) by (service_name) * histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[1m])) by (le, service_name))",
+          "legendFormat": "N = λ × P50 — {{ service_name }}",
           "refId": "B"
-        },
-        {
-          "expr": "sum(rate(http_server_request_count_total[1m])) * histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))",
-          "legendFormat": "N = λ × P95 (mid estimate)",
-          "refId": "C"
         }
       ],
-      "title": "📐 Little's Law: N = λ × T (In-flight Request Estimate)",
+      "title": "📐 Little's Law: N = λ × T — OTel SDK (in-flight estimate)",
       "type": "timeseries"
     }
+
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["microservices", "scenario2", "hol-blocking", "thread-pool", "littles-law"],
+  "tags": ["microservices", "scenario2", "hol-blocking", "thread-pool", "k6", "otel-sdk"],
   "templating": {
     "list": [
       {
@@ -199,6 +400,19 @@
         "refresh": 1,
         "type": "datasource",
         "label": "Datasource"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+        "definition": "label_values(node_cpu_seconds_total, node)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "node",
+        "query": "label_values(node_cpu_seconds_total, node)",
+        "refresh": 2,
+        "type": "query",
+        "label": "Node"
       },
       {
         "current": {},

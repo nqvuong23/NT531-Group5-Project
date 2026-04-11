@@ -4,7 +4,8 @@ groups:
 
   # ================================================================
   # SCENARIO 1 — Microburst Traffic & Congestion
-  # Metrics: TCP retransmit, packet drop, latency spike, error 502/504
+  # node-exporter: TCP retransmit (node1), packet drop (node2), PPS (node1+2)
+  # k6 output:     latency (k6_http_req_duration_milliseconds_bucket), error rate (k6_http_req_failed)
   # ================================================================
   - orgId: 1
     name: "Scenario 1 — Microburst"
@@ -13,7 +14,8 @@ groups:
     rules:
 
       # ── Alert 1.1: TCPRetransmitSpike ──
-      # TCP retransmit > 10/s: dấu hiệu RX buffer đầy, packet drop
+      # Source: node-exporter (collector.netstat) trên node 1 (nginx)
+      # node_netstat_Tcp_RetransSegs từ /proc/net/netstat
       - uid: tcp-retransmit-spike
         title: TCPRetransmitSpike
         condition: C
@@ -24,7 +26,7 @@ groups:
               from: 300
               to: 0
             model:
-              expr: "sum(rate(node_netstat_Tcp_RetransSegs[1m]))"
+              expr: "sum(rate(node_netstat_Tcp_RetransSegs[1m])) by (node)"
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -45,15 +47,16 @@ groups:
         execErrState: Alerting
         for: 1m
         annotations:
-          summary: "TCP retransmission spike detected"
-          description: "TCP retransmit rate > 10/s — RX buffer overrun, possible microburst packet drop. Check node_network_receive_drop_total."
-          runbook_url: "Step1: Grafana S1 dashboard → TCP Retransmit panel. Step2: Check k6 burst config. Step3: Verify NIC ring buffer size."
+          summary: "TCP retransmission spike detected on {{ $labels.node }}"
+          description: "TCP retransmit rate > 10/s on node 1 (nginx) — RX buffer overrun, possible microburst packet drop. Source: node-exporter collector.netstat. Check node_network_receive_drop_total."
+          runbook_url: "Step1: Grafana S1 dashboard → TCP Retransmit panel. Step2: Check k6 burst config. Step3: Verify NIC ring buffer size (ethtool -g eth0)."
         labels:
           severity: medium
           scenario: "scenario1"
 
       # ── Alert 1.2: HighPacketDropRate ──
-      # Packet drop > 1% of RX: dấu hiệu buffer overrun
+      # Source: node-exporter (collector.netdev) trên node 2 (frontend)
+      # node_network_receive_drop_total từ /proc/net/dev
       - uid: high-packet-drop-rate
         title: HighPacketDropRate
         condition: C
@@ -65,8 +68,8 @@ groups:
               to: 0
             model:
               expr: |
-                sum(rate(node_network_receive_drop_total{device="eth0"}[1m]))
-                / sum(rate(node_network_receive_packets_total{device="eth0"}[1m])) * 100
+                sum(rate(node_network_receive_drop_total{device="eth0"}[1m])) by (node)
+                / sum(rate(node_network_receive_packets_total{device="eth0"}[1m])) by (node) * 100
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -87,13 +90,16 @@ groups:
         execErrState: Alerting
         for: 1m
         annotations:
-          summary: "Packet drop rate > 1% on eth0"
-          description: "High RX packet drop — NIC buffer overrun from microburst. Check ethtool -S eth0."
+          summary: "Packet drop rate > 1% on eth0 node {{ $labels.node }}"
+          description: "High RX packet drop on node 2 (frontend) — NIC buffer overrun from microburst. Source: node-exporter collector.netdev. Check ethtool -S eth0."
         labels:
           severity: high
           scenario: "scenario1"
 
-      # ── Alert 1.3: HighErrorRate (502/504 from microburst) ──
+      # ── Alert 1.3: HighErrorRate (502/504) ──
+      # Source: k6 --out otlp → OTel Agent k6-EC2 → Collector
+      # k6_http_req_failed là gauge (0=success, 1=failed), avg() = tỷ lệ
+      # KHÔNG dùng http_server_request_count_total — đó là OTel SDK metric từ microservice
       - uid: high-error-rate
         title: HighErrorRate
         condition: C
@@ -105,8 +111,7 @@ groups:
               to: 0
             model:
               expr: |
-                sum(rate(http_server_request_count_total{http_response_status_code=~"5.."}[1m]))
-                / sum(rate(http_server_request_count_total[1m])) * 100
+                avg(k6_http_req_failed{source="k6"}) * 100
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -127,14 +132,17 @@ groups:
         execErrState: Alerting
         for: 1m
         annotations:
-          summary: "HTTP 5xx error rate > 1%"
-          description: "High 5xx rate — check 502/504 breakdown. During microburst: upstream timeout or connection refused."
+          summary: "k6 error rate > 1% (502/504 during microburst)"
+          description: "High k6 http_req_failed rate — upstream timeout or connection refused. Source: k6 output via OTLP. During microburst: TCP retransmit → nginx 502/504."
           runbook_url: "Step1: Grafana Error Rate panel. Step2: OTel trace waterfall. Step3: Check Nginx access log."
         labels:
           severity: critical
           scenario: "scenario1"
 
       # ── Alert 1.4: HighP99Latency ──
+      # Source: k6 --out otlp → OTel Agent k6-EC2 → Collector
+      # k6_http_req_duration_milliseconds_bucket (histogram, đơn vị ms)
+      # KHÔNG dùng http_server_request_duration_seconds_bucket — đó là OTel SDK metric
       - uid: high-p99-latency
         title: HighP99Latency
         condition: C
@@ -147,8 +155,8 @@ groups:
             model:
               expr: |
                 histogram_quantile(0.99,
-                  sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)
-                ) * 1000
+                  sum(rate(k6_http_req_duration_milliseconds_bucket{source="k6"}[1m])) by (le)
+                )
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -169,15 +177,16 @@ groups:
         execErrState: Alerting
         for: 2m
         annotations:
-          summary: "P99 latency > 500ms"
-          description: "P99 latency spike — during microburst: TCP retransmit adds RTT. During HoL: thread pool full."
+          summary: "k6 P99 latency > 500ms"
+          description: "P99 latency spike from k6 — during microburst: TCP retransmit adds RTT. Unit: milliseconds (k6 native). Source: k6_http_req_duration_milliseconds_bucket."
         labels:
           severity: high
           scenario: "scenario1"
 
   # ================================================================
   # SCENARIO 2 — Head-of-Line Blocking (Thread Pool Saturation)
-  # Metrics: 503 rate as proxy for thread pool full, latency skew
+  # k6 output:    503 rate (k6_http_req_failed), latency skew (k6_http_req_duration_milliseconds_bucket)
+  # OTel SDK:     thread pool metrics (thread_pool_active_workers, connection_pool_*) từ frontend node 2
   # ================================================================
   - orgId: 1
     name: "Scenario 2 — HoL Blocking"
@@ -186,7 +195,9 @@ groups:
     rules:
 
       # ── Alert 2.1: ThreadPoolSaturated ──
-      # 503 rate > 10%: Go worker pool semaphore rejected requests
+      # Source: k6 --out otlp (503 rate là proxy cho thread pool saturation)
+      # k6_http_req_failed với filter http_status_code=503
+      # KHÔNG dùng http_server_request_count_total — đó là OTel SDK metric
       - uid: thread-pool-saturated
         title: ThreadPoolSaturated
         condition: C
@@ -198,8 +209,7 @@ groups:
               to: 0
             model:
               expr: |
-                sum(rate(http_server_request_count_total{http_response_status_code="503"}[1m]))
-                / sum(rate(http_server_request_count_total[1m])) * 100
+                avg(k6_http_req_failed{source="k6", http_status_code="503"}) * 100
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -220,17 +230,19 @@ groups:
         execErrState: Alerting
         for: 1m
         annotations:
-          summary: "Worker thread pool saturated — 503 rate > 10%"
+          summary: "Worker thread pool saturated — k6 503 rate > 10%"
           description: >
-            HTTP 503 rate high — Go worker pool semaphore full (M/M/n/K loss model).
-            Check response header X-Worker-Pool-Active vs X-Worker-Pool-Cap.
-            Reproduce: inject tc netem delay 50–500ms → observe HoL cascade.
+            k6 reports 503 rate > 10% — proxy for Go worker pool semaphore full (M/M/n/K loss model).
+            Source: k6_http_req_failed with http_status_code=503.
+            Reproduce: inject tc netem delay 50–500ms on node3 eth0 → observe HoL cascade.
+            Check OTel SDK metric thread_pool_active_workers in frontend dashboard.
         labels:
           severity: high
           scenario: "scenario2"
 
       # ── Alert 2.2: P99LatencySkew ──
-      # P99 >> P50 ratio > 10x: HoL blocking signature
+      # Source: k6 --out otlp → OTel Agent k6-EC2
+      # k6_http_req_duration_milliseconds_bucket (histogram, ms)
       - uid: p99-latency-skew
         title: P99LatencySkew
         condition: C
@@ -242,9 +254,9 @@ groups:
               to: 0
             model:
               expr: |
-                histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))
+                histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source="k6"}[1m])) by (le))
                 /
-                histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le))
+                histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source="k6"}[1m])) by (le))
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -266,14 +278,16 @@ groups:
         for: 2m
         annotations:
           summary: "P99/P50 latency ratio > 10x — HoL blocking signature"
-          description: "Large gap between P99 and P50 indicates head-of-line blocking. Check thread pool active connections and downstream delay via OTel traces."
+          description: "Large gap between P99 and P50 from k6 indicates head-of-line blocking. Source: k6_http_req_duration_milliseconds_bucket. Check thread_pool_active_workers (OTel SDK) and downstream netem delay."
         labels:
           severity: high
           scenario: "scenario2"
 
   # ================================================================
   # SCENARIO 3 — Resource Contention
-  # Metrics: CPU steal, context switches, per-endpoint latency gap
+  # node-exporter: CPU steal (node3), context switches (node3), qdisc (node3)
+  # k6 output:     latency per flow (k6_http_req_duration_milliseconds_bucket, by name tag)
+  # OTel SDK:      latency per endpoint (http_server_request_duration_seconds_bucket, backend node3)
   # ================================================================
   - orgId: 1
     name: "Scenario 3 — Resource Contention"
@@ -282,7 +296,8 @@ groups:
     rules:
 
       # ── Alert 3.1: HighCPUSteal ──
-      # CPU steal > 10%: noisy neighbour trên EC2 shared tenancy
+      # Source: node-exporter (collector.cpu) trên node 3 (backend)
+      # node_cpu_seconds_total{mode="steal"} từ /proc/stat
       - uid: high-cpu-steal
         title: HighCPUSteal
         condition: C
@@ -316,13 +331,14 @@ groups:
         for: 2m
         annotations:
           summary: "CPU steal > 10% on node {{ $labels.node }}"
-          description: "High CPU steal — noisy neighbour or over-provisioned EC2 instance. Light flow (GET /health) impacted by heavy flow (POST /data)."
+          description: "High CPU steal on node 3 (backend) — hypervisor noisy neighbour or EC2 shared tenancy. Source: node-exporter node_cpu_seconds_total{mode='steal'}. Light flow (GET /health) impacted by heavy flow (POST /data-processing)."
         labels:
           severity: medium
           scenario: "scenario3"
 
       # ── Alert 3.2: HighContextSwitchRate ──
-      # Context switches > 100k/s: scheduling overhead from resource contention
+      # Source: node-exporter (collector.stat) trên node 3 (backend)
+      # node_context_switches_total từ /proc/stat ctxt
       - uid: high-context-switch-rate
         title: HighContextSwitchRate
         condition: C
@@ -356,13 +372,15 @@ groups:
         for: 2m
         annotations:
           summary: "Context switch rate > 100k/s on node {{ $labels.node }}"
-          description: "Excessive context switches — heavy POST /data flow consuming CPU quanta, starving GET /health. Compare per-endpoint latency."
+          description: "Excessive context switches on node 3 (backend) — heavy POST /data-processing consuming CPU quanta, starving GET /health. Source: node-exporter node_context_switches_total (collector.stat)."
         labels:
           severity: medium
           scenario: "scenario3"
 
       # ── Alert 3.3: EndpointLatencyDivergence ──
-      # P99 latency gap giữa endpoints: heavy endpoint ảnh hưởng light endpoint
+      # Source: k6 --out otlp (per URL group / name tag)
+      # k6_http_req_duration_milliseconds_bucket phân tách theo label name (k6 URL group)
+      # KHÔNG dùng http_server_request_duration_seconds_bucket — đó là OTel SDK metric từ microservice
       - uid: endpoint-latency-divergence
         title: EndpointLatencyDivergence
         condition: C
@@ -375,8 +393,8 @@ groups:
             model:
               expr: |
                 max(
-                  histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, http_route))
-                ) * 1000
+                  histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source="k6"}[1m])) by (le, name))
+                )
               intervalMs: 1000
               maxDataPoints: 43200
               refId: A
@@ -397,8 +415,49 @@ groups:
         execErrState: Alerting
         for: 2m
         annotations:
-          summary: "Endpoint P99 latency > 200ms — resource contention"
-          description: "Worst-case endpoint P99 > 200ms. Heavy flow (POST /data) may be saturating CPU/memory, causing latency bleed to light flow (GET /health)."
+          summary: "k6 endpoint P99 latency > 200ms — resource contention"
+          description: "Worst-case endpoint P99 > 200ms from k6. Source: k6_http_req_duration_milliseconds_bucket by URL group (name tag). Heavy flow (POST /data-processing) may be saturating CPU on node 3, causing latency bleed to light flow (GET /health)."
+        labels:
+          severity: medium
+          scenario: "scenario3"
+
+      # ── Alert 3.4: QdiscDropRate ──
+      # Source: node-exporter (collector.qdisc) trên node 3 (backend)
+      # node_qdisc_drops_total — packet drops tại qdisc level
+      - uid: qdisc-drop-rate
+        title: QdiscDropRate
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: "victoriametrics-ds"
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              expr: |
+                sum(rate(node_qdisc_drops_total{device="eth0"}[1m])) by (node)
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: "__expr__"
+            model:
+              conditions:
+                - evaluator: { params: [10], type: gt }
+                  operator: { type: and }
+                  query: { params: [A] }
+                  reducer: { params: [], type: last }
+                  type: query
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: NoData
+        execErrState: Alerting
+        for: 1m
+        annotations:
+          summary: "qdisc drop rate > 10/s on node {{ $labels.node }}"
+          description: "Packet drops at qdisc level on node 3 (backend) eth0. Source: node-exporter node_qdisc_drops_total (collector.qdisc). Heavy flow (POST /data 100KB) flooding qdisc → drops affecting light flow (GET /health)."
         labels:
           severity: medium
           scenario: "scenario3"

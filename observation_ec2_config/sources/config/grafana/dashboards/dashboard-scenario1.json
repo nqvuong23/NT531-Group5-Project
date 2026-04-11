@@ -2,22 +2,110 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Scenario 1 — Microburst Traffic & Congestion: TCP retransmit, packet drop, latency spike, error rate.",
+  "description": "Scenario 1 — Microburst Traffic & Congestion: TCP retransmit (node-exporter node1), packet drop (node-exporter node2), latency/error/jitter (k6 output).",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
-      "id": 100,
-      "title": "📡 Network Layer — PPS & Drops",
+      "id": 200,
+      "title": "📊 Mandatory — CPU / Memory / Request Count",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "RX Packets Per Second tại 1s resolution — dùng để detect microburst ngắn (50ms). Spike đột ngột = burst traffic.",
+      "description": "CPU utilization per node — source: node-exporter (collector.cpu). Microburst thường gây CPU spike ngắn tại node 1 (nginx) do interrupt storm xử lý gói tin ồ ạt.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 201,
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\", node=~\"$node\"}[1m])) by (node)",
+          "legendFormat": "CPU — {{ node }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🖥️ CPU Utilization per Node",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Memory available per node — source: node-exporter (collector.meminfo). Burst traffic có thể dẫn tới kernel socket buffer allocation tăng, giảm free memory.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "bytes"
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 202,
+      "targets": [
+        {
+          "expr": "node_memory_MemAvailable_bytes{node=~\"$node\"}",
+          "legendFormat": "Available RAM — {{ node }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🧠 Memory Available per Node",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Request count/s từ k6 — source: k6 --out otlp → OTel Agent k6-EC2 → Collector. k6_http_reqs_total là counter tích lũy, rate() ra RPS. Microburst: RPS tăng đột ngột → drop khi lỗi xảy ra.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 203,
+      "targets": [
+        {
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\"}[1m]))",
+          "legendFormat": "Total RPS (k6)",
+          "refId": "A"
+        }
+      ],
+      "title": "📈 Request Count — k6 Total RPS",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 100,
+      "title": "📡 Network Layer — PPS & Drops (node-exporter: node1 nginx + node2 frontend)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "RX Packets Per Second — source: node-exporter (collector.netdev) trên node 1 (nginx) và node 2 (frontend). 1s window để detect microburst ngắn (50ms). Node 1 nhận burst từ k6, Node 2 nhận forward từ nginx.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -25,17 +113,17 @@
           "unit": "pps"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
       "id": 1,
       "options": { "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum(rate(node_network_receive_packets_total{device=\"eth0\"}[1s])) by (node)",
+          "expr": "sum(rate(node_network_receive_packets_total{device=\"eth0\", node=~\"$node\"}[1s])) by (node)",
           "legendFormat": "RX PPS 1s — {{ node }}",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(node_network_receive_packets_total{device=\"eth0\"}[10s])) by (node)",
+          "expr": "sum(rate(node_network_receive_packets_total{device=\"eth0\", node=~\"$node\"}[10s])) by (node)",
           "legendFormat": "RX PPS 10s avg — {{ node }}",
           "refId": "B"
         }
@@ -43,9 +131,10 @@
       "title": "🔥 Network RX PPS — 1s vs 10s (Microburst Detection)",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Packet drop tuyệt đối và % drop rate. Drop > 1% = buffer overrun từ microburst.",
+      "description": "Packet drop — source: node-exporter (collector.netdev) trên node 2 (frontend). RX Buffer/Queue đầy → Drop-Tail. Drop > 1% = buffer overrun từ microburst. node_network_receive_drop_total từ /proc/net/dev.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -58,39 +147,50 @@
             "properties": [
               { "id": "unit", "value": "percent" },
               { "id": "custom.axisPlacement", "value": "right" },
-              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "red", "value": 1 }
+                  ]
+                }
+              },
               { "id": "custom.thresholdsStyle", "value": { "mode": "line" } }
             ]
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
       "id": 2,
       "targets": [
         {
-          "expr": "sum(rate(node_network_receive_drop_total{device=\"eth0\"}[10s])) by (node)",
+          "expr": "sum(rate(node_network_receive_drop_total{device=\"eth0\", node=~\"$node\"}[10s])) by (node)",
           "legendFormat": "RX Drop/s — {{ node }}",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(node_network_receive_drop_total{device=\"eth0\"}[1m])) / sum(rate(node_network_receive_packets_total{device=\"eth0\"}[1m])) * 100",
+          "expr": "sum(rate(node_network_receive_drop_total{device=\"eth0\", node=~\"$node\"}[1m])) / sum(rate(node_network_receive_packets_total{device=\"eth0\", node=~\"$node\"}[1m])) * 100",
           "legendFormat": "Drop % — eth0",
           "refId": "B"
         }
       ],
-      "title": "📉 Packet Drop Rate (Absolute & %)",
+      "title": "📉 Packet Drop Rate — Absolute & % (node 2: frontend)",
       "type": "timeseries"
     },
+
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
       "id": 101,
-      "title": "🔁 TCP Layer — Retransmit & Network Stats",
+      "title": "🔁 TCP Layer — Retransmit & Throughput (node-exporter: node1 nginx)",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "TCP Retransmit rate. Spike = packet loss → TCP recovery → latency tăng. Ngưỡng alert: > 10/s.",
+      "description": "TCP Retransmit rate — source: node-exporter (collector.netstat) trên node 1 (nginx). node_netstat_Tcp_RetransSegs từ /proc/net/netstat. Spike = packet loss → TCP recovery → latency tăng. Alert: > 10/s.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -98,25 +198,30 @@
           "unit": "short",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 10 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
           }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
       "id": 3,
       "targets": [
         {
-          "expr": "sum(rate(node_netstat_Tcp_RetransSegs[10s])) by (node)",
+          "expr": "sum(rate(node_netstat_Tcp_RetransSegs{node=~\"$node\"}[10s])) by (node)",
           "legendFormat": "TCP Retransmit/s — {{ node }}",
           "refId": "A"
         }
       ],
-      "title": "⚠️ TCP Retransmit Rate/s",
+      "title": "⚠️ TCP Retransmit Rate/s (node 1: nginx)",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Bytes throughput trên eth0. Kết hợp với PPS để tính average packet size (nhỏ = nhiều small packets = overhead).",
+      "description": "Network throughput bytes — source: node-exporter (collector.netdev). Kết hợp PPS để tính avg packet size. Microburst: TX tăng đột ngột tại node 1 (nginx), sau đó node 2 (frontend) cũng tăng.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -124,33 +229,35 @@
           "unit": "Bps"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
       "id": 4,
       "targets": [
         {
-          "expr": "sum(rate(node_network_receive_bytes_total{device=\"eth0\"}[10s])) by (node)",
+          "expr": "sum(rate(node_network_receive_bytes_total{device=\"eth0\", node=~\"$node\"}[10s])) by (node)",
           "legendFormat": "RX Bytes/s — {{ node }}",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(node_network_transmit_bytes_total{device=\"eth0\"}[10s])) by (node)",
+          "expr": "sum(rate(node_network_transmit_bytes_total{device=\"eth0\", node=~\"$node\"}[10s])) by (node)",
           "legendFormat": "TX Bytes/s — {{ node }}",
           "refId": "B"
         }
       ],
-      "title": "🌐 Network Throughput (Bytes/s)",
+      "title": "🌐 Network Throughput Bytes/s",
       "type": "timeseries"
     },
+
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
       "id": 102,
-      "title": "⏱️ Application Layer — Latency & Error Rate",
+      "title": "⏱️ Application Layer — Latency, Error Rate & Jitter (k6 output → OTel Agent k6-EC2)",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Latency percentiles toàn service. Microburst signature: P99/P99.9 spike mạnh, P50 tăng ít. Red line = 500ms alert threshold.",
+      "description": "Latency percentiles — source: k6 --out otlp → OTel Agent (k6 EC2) → Collector. k6_http_req_duration_milliseconds_bucket là histogram k6 export qua OTLP. Đơn vị milliseconds vì k6 báo cáo ms. Microburst: P99/P99.9 spike mạnh, P50 tăng ít.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -158,40 +265,46 @@
           "unit": "ms",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "orange", "value": 100 }, { "color": "red", "value": 500 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "orange", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
           }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
       "id": 5,
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
-          "legendFormat": "P50",
+          "expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "P50 (ms)",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
-          "legendFormat": "P95",
+          "expr": "histogram_quantile(0.95, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "P95 (ms)",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
-          "legendFormat": "P99",
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "P99 (ms)",
           "refId": "C"
         },
         {
-          "expr": "histogram_quantile(0.999, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le)) * 1000",
-          "legendFormat": "P99.9",
+          "expr": "histogram_quantile(0.999, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "P99.9 (ms)",
           "refId": "D"
         }
       ],
-      "title": "⏱️ Latency Percentiles — P50 / P95 / P99 / P99.9",
+      "title": "⏱️ Latency Percentiles P50/P95/P99/P99.9 — k6",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Error rate theo status code. Microburst: 502 (upstream fail) + 504 (timeout). Alert nếu 5xx > 1%.",
+      "description": "Error rate — source: k6 --out otlp. k6_http_req_failed là gauge (0 = success, 1 = failed) được k6 export. avg() cho ra tỷ lệ failed. Để phân biệt 502/504 cần k6 script set tag http_status_code. Ngưỡng: > 1%.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -199,68 +312,69 @@
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.005 }, { "color": "red", "value": 0.01 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.005 },
+              { "color": "red", "value": 0.01 }
+            ]
           }
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
       "id": 6,
       "targets": [
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=~\"5..\"}[1m])) / sum(rate(http_server_request_count_total[1m]))",
-          "legendFormat": "5xx Rate (all)",
+          "expr": "avg(k6_http_req_failed{source=\"k6\"})",
+          "legendFormat": "Failed Rate (all errors)",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"502\"}[1m])) / sum(rate(http_server_request_count_total[1m]))",
-          "legendFormat": "502 Rate (Bad Gateway)",
+          "expr": "avg(k6_http_req_failed{source=\"k6\", expected_response=\"false\"})",
+          "legendFormat": "Failed Rate (unexpected status)",
           "refId": "B"
-        },
-        {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=\"504\"}[1m])) / sum(rate(http_server_request_count_total[1m]))",
-          "legendFormat": "504 Rate (Timeout)",
-          "refId": "C"
         }
       ],
-      "title": "❌ Error Rate — 5xx / 502 / 504",
+      "title": "❌ Error Rate — k6 http_req_failed (502/504 proxy)",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Throughput toàn service. Trong microburst: total RPS tăng đột ngột, sau đó drop do errors.",
+      "description": "Jitter (Std Dev latency) — source: k6 --out otlp. k6 không export std dev trực tiếp. Proxy: P90-P10 spread = IQR-based jitter. P99-P50 = tail jitter. Cao = latency không ổn định = microburst congestion. k6_http_req_waiting đo thời gian chờ TTFB.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": { "lineWidth": 2 },
-          "unit": "reqps"
+          "unit": "ms"
         }
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 27 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 36 },
       "id": 7,
       "targets": [
         {
-          "expr": "sum(rate(http_server_request_count_total[1m]))",
-          "legendFormat": "Total RPS",
+          "expr": "histogram_quantile(0.90, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le)) - histogram_quantile(0.10, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "Jitter proxy (P90 - P10) ms",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=~\"2..\"}[1m]))",
-          "legendFormat": "Success (2xx) RPS",
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le)) - histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "Tail Jitter (P99 - P50) ms",
           "refId": "B"
         },
         {
-          "expr": "sum(rate(http_server_request_count_total{http_response_status_code=~\"5..\"}[1m]))",
-          "legendFormat": "Error (5xx) RPS",
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_waiting_milliseconds_bucket{source=\"k6\"}[1m])) by (le))",
+          "legendFormat": "P99 TTFB Wait (ms)",
           "refId": "C"
         }
       ],
-      "title": "📈 Request Throughput — Total vs Success vs Error",
+      "title": "〰️ Jitter — Latency Spread (P90-P10 & P99-P50) + TTFB",
       "type": "timeseries"
     }
+
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["microservices", "scenario1", "microburst", "tcp", "network"],
+  "tags": ["microservices", "scenario1", "microburst", "tcp", "network", "k6"],
   "templating": {
     "list": [
       {

@@ -2,22 +2,24 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Scenario 3 — Resource Contention: CPU steal, context switches, per-endpoint latency divergence.",
+  "description": "Scenario 3 — Resource Contention: CPU steal + context switches (node-exporter node3), qdisc queue/drop (node-exporter node3), latency per flow (k6 + OTel SDK backend node3).",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
+
     {
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
-      "id": 100,
-      "title": "🖥️ CPU — Utilization, Steal & Context Switches",
+      "id": 200,
+      "title": "📊 Mandatory — CPU / Memory / Request Count",
       "type": "row"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "CPU utilization per node. Khi Flow nặng (POST /data) chiếm CPU, Flow nhẹ (GET /health) phải chờ → latency bleed.",
+      "description": "CPU utilization per node — source: node-exporter (collector.cpu). Resource contention: node 3 (backend) CPU bị chiếm bởi Flow 2 (POST /data-processing, 20% heavy), starvation Flow 1 (GET /health, 80% light).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -25,162 +27,31 @@
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.7 }, { "color": "red", "value": 0.9 }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "red", "value": 0.9 }
+            ]
           }
         }
       },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
-      "id": 1,
+      "id": 201,
       "options": { "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])) by (node)",
-          "legendFormat": "CPU Usage — {{ node }}",
+          "expr": "1 - avg(rate(node_cpu_seconds_total{mode=\"idle\", node=~\"$node\"}[1m])) by (node)",
+          "legendFormat": "CPU — {{ node }}",
           "refId": "A"
         }
       ],
       "title": "🖥️ CPU Utilization per Node",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "CPU steal time — thời gian CPU bị hypervisor lấy đi cho VM khác (noisy neighbour). Steal > 10% = EC2 shared tenancy contention. Alert threshold: 10%.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "percentunit",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.10 }]
-          }
-        }
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
-      "id": 2,
-      "targets": [
-        {
-          "expr": "avg(rate(node_cpu_seconds_total{mode=\"steal\"}[1m])) by (node)",
-          "legendFormat": "CPU Steal — {{ node }}",
-          "refId": "A"
-        }
-      ],
-      "title": "🕵️ CPU Steal Time (Noisy Neighbour)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Context switches per second. Contention signature: tăng đột ngột khi heavy flow (POST /data) + light flow (GET /health) cạnh tranh CPU. Alert: > 100k/s.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "short",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50000 }, { "color": "red", "value": 100000 }]
-          }
-        }
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
-      "id": 3,
-      "targets": [
-        {
-          "expr": "sum(rate(node_context_switches_total[1m])) by (node)",
-          "legendFormat": "Context Switches/s — {{ node }}",
-          "refId": "A"
-        }
-      ],
-      "title": "🔄 CPU Context Switches/s per Node",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
-      "id": 101,
-      "title": "📊 Per-Endpoint Latency — Flow Isolation",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "P50 latency theo endpoint (http_route). Resource contention signature: POST /data có P50 cao, kéo theo GET /health tăng latency do CPU scheduler delay.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "ms"
-        }
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
-      "id": 4,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, http_route)) * 1000",
-          "legendFormat": "P50 — {{ http_route }}",
-          "refId": "A"
-        }
-      ],
-      "title": "⏱️ P50 Latency per Endpoint",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "P99 latency theo endpoint. Divergence lớn giữa /health (nhẹ) và /data (nặng) = contention. Alert: max P99 > 200ms.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "ms",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 100 }, { "color": "red", "value": 200 }]
-          }
-        }
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
-      "id": 5,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket[1m])) by (le, http_route)) * 1000",
-          "legendFormat": "P99 — {{ http_route }}",
-          "refId": "A"
-        }
-      ],
-      "title": "⏱️ P99 Latency per Endpoint",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Throughput theo endpoint. Contention: khi POST /data bão hoà, RPS của GET /health có thể tăng nhưng latency cũng tăng.",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 2 },
-          "unit": "reqps"
-        }
-      },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
-      "id": 6,
-      "targets": [
-        {
-          "expr": "sum(rate(http_server_request_count_total[1m])) by (http_route)",
-          "legendFormat": "RPS — {{ http_route }}",
-          "refId": "A"
-        }
-      ],
-      "title": "📈 Throughput per Endpoint",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
-      "id": 102,
-      "title": "🧠 Memory",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "Memory available per node. Khi POST /data cần nhiều RAM, available giảm → potential swap → latency spike cho cả 2 flows.",
+      "description": "Memory available per node — source: node-exporter (collector.meminfo). POST /data-processing (100KB payload) tiêu thụ RAM nhiều hơn GET /health (<1KB). Khi available giảm → swap → latency spike cho cả 2 flow.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -188,11 +59,11 @@
           "unit": "bytes"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
-      "id": 7,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 202,
       "targets": [
         {
-          "expr": "node_memory_MemAvailable_bytes",
+          "expr": "node_memory_MemAvailable_bytes{node=~\"$node\"}",
           "legendFormat": "Available RAM — {{ node }}",
           "refId": "A"
         }
@@ -200,9 +71,117 @@
       "title": "🧠 Memory Available per Node",
       "type": "timeseries"
     },
+
     {
       "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-      "description": "System load average. load1 spike = CPU bị oversubscribed. Kết hợp với context switches để xác nhận resource contention.",
+      "description": "Request count theo endpoint — source: k6 --out otlp → OTel Agent k6-EC2. k6_http_reqs_total phân tách theo tag name (k6 URL group). Flow 1 (GET /health) ~80% RPS, Flow 2 (POST /data-processing) ~20% RPS.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "reqps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 203,
+      "targets": [
+        {
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\"}[1m])) by (name)",
+          "legendFormat": "RPS — {{ name }}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(k6_http_reqs_total{source=\"k6\"}[1m]))",
+          "legendFormat": "Total RPS",
+          "refId": "B"
+        }
+      ],
+      "title": "📈 Request Count per Flow — k6 (by URL group)",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 100,
+      "title": "🖥️ CPU — Steal & Context Switches (node-exporter: node 3 backend)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "CPU steal time — source: node-exporter (collector.cpu) trên node 3 (backend). Steal = thời gian CPU bị hypervisor lấy đi cho tenant khác (EC2 shared). Steal > 10% = noisy neighbour. node_cpu_seconds_total{mode='steal'} từ /proc/stat.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.10 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "id": 1,
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "avg(rate(node_cpu_seconds_total{mode=\"steal\", node=~\"$node\"}[1m])) by (node)",
+          "legendFormat": "CPU Steal — {{ node }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🕵️ CPU Steal Time — node 3 backend",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Context switches per second — source: node-exporter (collector.stat) trên node 3 (backend). node_context_switches_total từ /proc/stat ctxt. Contention: Flow 2 heavy chiếm CPU quanta → kernel scheduler switch liên tục cho Flow 1 → overhead. Alert: > 100k/s.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50000 },
+              { "color": "red", "value": 100000 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(node_context_switches_total{node=~\"$node\"}[1m])) by (node)",
+          "legendFormat": "Context Switches/s — {{ node }}",
+          "refId": "A"
+        }
+      ],
+      "title": "🔄 CPU Context Switches/s — node 3 backend",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 104,
+      "title": "🌐 Network — qdisc Queue Depth & Drops (node-exporter: node 3 backend)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "qdisc queue depth và drops — source: node-exporter (collector.qdisc) trên node 3 (backend). node_qdisc_queues_total = số packet đang xếp hàng trong qdisc. node_qdisc_drops_total = packet bị drop tại qdisc. Contention: Flow 2 (100KB payload) chiếm bandwidth → Flow 1 bị queue hoặc drop.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -210,16 +189,165 @@
           "unit": "short"
         }
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "node_qdisc_queues_total{device=\"eth0\", node=~\"$node\"}",
+          "legendFormat": "Queue Depth — {{ node }}",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(node_qdisc_drops_total{device=\"eth0\", node=~\"$node\"}[1m])",
+          "legendFormat": "Drop Rate/s — {{ node }}",
+          "refId": "B"
+        }
+      ],
+      "title": "📦 qdisc Queue Depth & Drops — node 3 backend",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Packet dispersion (Jitter) — source: k6 --out otlp. P90-P10 spread theo URL group (Flow 1 vs Flow 2). Flow 1 (GET /health) bình thường jitter thấp, nhưng khi chạy chung Flow 2 thì jitter tăng do CPU starvation và qdisc queue.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.90, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le, name)) - histogram_quantile(0.10, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le, name))",
+          "legendFormat": "Packet Dispersion (P90-P10) — {{ name }}",
+          "refId": "A"
+        }
+      ],
+      "title": "〰️ Packet Dispersion / Jitter per Flow — k6",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "id": 101,
+      "title": "📊 Per-Flow Latency — k6 (Flow Isolation: GET /health vs POST /data)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "P50 latency theo URL group (name tag) — source: k6 --out otlp → OTel Agent k6-EC2. k6_http_req_duration_milliseconds_bucket phân tách theo label name. Resource contention: GET /health P50 tăng khi chạy chung POST /data-processing dù logic không đổi → chứng minh interference.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le, name))",
+          "legendFormat": "P50 — {{ name }}",
+          "refId": "A"
+        }
+      ],
+      "title": "⏱️ P50 Latency per Flow — k6 (URL group)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "P99 latency theo URL group — source: k6 --out otlp. Divergence: POST /data-processing P99 cao → kéo GET /health P99 lên do CPU scheduler contention. Alert: max P99 > 200ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(k6_http_req_duration_milliseconds_bucket{source=\"k6\"}[1m])) by (le, name))",
+          "legendFormat": "P99 — {{ name }}",
+          "refId": "A"
+        }
+      ],
+      "title": "⏱️ P99 Latency per Flow — k6 (URL group)",
+      "type": "timeseries"
+    },
+
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "id": 102,
+      "title": "🔍 OTel SDK — Backend Service Latency per Endpoint (node 3)",
+      "type": "row"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "Latency theo http_route — source: OTel SDK trong backend service (node 3) → OTel Agent DaemonSet → Collector. http_server_request_duration_seconds là OTel semantic convention. Phân tách /health vs /data-processing. So sánh với k6 latency để thấy network overhead.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "ms"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_request_duration_seconds_bucket{http_route=~\"$route\", service_name=~\"$service\"}[1m])) by (le, http_route)) * 1000",
+          "legendFormat": "P50 — {{ http_route }}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_request_duration_seconds_bucket{http_route=~\"$route\", service_name=~\"$service\"}[1m])) by (le, http_route)) * 1000",
+          "legendFormat": "P99 — {{ http_route }}",
+          "refId": "B"
+        }
+      ],
+      "title": "⏱️ OTel SDK P50/P99 per Endpoint — backend (node 3)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+      "description": "System load average — source: node-exporter (collector.loadavg). load1 spike = CPU bị oversubscribed. Kết hợp với context switches để xác nhận resource contention. node_load1 từ /proc/loadavg.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
       "id": 8,
       "targets": [
         {
-          "expr": "node_load1",
+          "expr": "node_load1{node=~\"$node\"}",
           "legendFormat": "Load 1m — {{ node }}",
           "refId": "A"
         },
         {
-          "expr": "node_load5",
+          "expr": "node_load5{node=~\"$node\"}",
           "legendFormat": "Load 5m — {{ node }}",
           "refId": "B"
         }
@@ -227,10 +355,11 @@
       "title": "⚖️ System Load Average",
       "type": "timeseries"
     }
+
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["microservices", "scenario3", "resource-contention", "cpu-steal", "context-switches"],
+  "tags": ["microservices", "scenario3", "resource-contention", "cpu-steal", "context-switches", "k6", "node-exporter"],
   "templating": {
     "list": [
       {
@@ -260,12 +389,25 @@
       {
         "current": {},
         "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
-        "definition": "label_values(http_server_request_count_total, http_route)",
+        "definition": "label_values(http_server_request_duration_seconds_bucket, service_name)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "service",
+        "query": "label_values(http_server_request_duration_seconds_bucket, service_name)",
+        "refresh": 2,
+        "type": "query",
+        "label": "Service"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${DS_VICTORIAMETRICS}" },
+        "definition": "label_values(http_server_request_duration_seconds_bucket, http_route)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "route",
-        "query": "label_values(http_server_request_count_total, http_route)",
+        "query": "label_values(http_server_request_duration_seconds_bucket, http_route)",
         "refresh": 2,
         "type": "query",
         "label": "Endpoint"
