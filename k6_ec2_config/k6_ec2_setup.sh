@@ -129,10 +129,10 @@ docker compose ps
 
 log "--- Bước 6: Tạo systemd unit monitoring-stack ---"
 
-cat > /etc/systemd/system/monitoring-stack.service <<'UNIT'
+cat > /etc/systemd/system/monitoring-stack.service <<UNIT
 [Unit]
-Description=Monitoring Stack — OTel Collector + VictoriaMetrics + Grafana
-Documentation=file:///opt/monitoring/docker-compose.yml
+Description=Monitoring Stack — OTel Agent on K6
+Documentation=file://${SRC_DIR}/docker-compose.yml
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -140,7 +140,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/monitoring
+WorkingDirectory=${SRC_DIR}
 ExecStart=/usr/bin/docker compose up -d
 ExecStop=/usr/bin/docker compose down
 ExecReload=/usr/bin/docker compose restart
